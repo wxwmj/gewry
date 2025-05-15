@@ -1,46 +1,31 @@
 import asyncio
-import aiohttp
 import base64
-import time
 from urllib.parse import urlparse
-from asyncio import Semaphore
+import time
 import sys
+from asyncio import Semaphore
 
-MAX_DELAY = 5000
-SUB_FILE = "subs.txt"
-OUTPUT_FILE = "sub"  # 输出文件名改为 sub（无扩展名）
-SUPPORTED_PROTOCOLS = ("vmess://", "ss://", "trojan://", "vless://", "hysteria://", "hysteria2://", "tuic://")
+MAX_DELAY = 5000  # 最大延迟ms，超出视为超时
 
-def is_supported_node(url):
-    return url.startswith(SUPPORTED_PROTOCOLS)
+# 判断节点格式是否支持
+def is_supported_node(url: str) -> bool:
+    return url.startswith((
+        "vmess://", "ss://", "trojan://", "vless://", "hysteria://", "hysteria2://", "tuic://"
+    ))
 
-def base64_decode_links(data):
+# Base64解码并过滤有效节点
+def base64_decode_links(data: str):
     try:
         decoded = base64.b64decode(data).decode("utf-8")
-        return [line.strip() for line in decoded.strip().splitlines() if is_supported_node(line)]
+        lines = [line.strip() for line in decoded.strip().splitlines()]
     except Exception:
-        return [line.strip() for line in data.strip().splitlines() if is_supported_node(line)]
+        lines = [line.strip() for line in data.strip().splitlines()]
+    return [line for line in lines if is_supported_node(line)]
 
-async def fetch_subscription(session, url):
+# 异步TCP连接测速，返回延迟(ms)，超时返回None
+async def tcp_ping(host: str, port: int, timeout=5):
     try:
-        async with session.get(url, timeout=10) as resp:
-            raw = await resp.text()
-            return base64_decode_links(raw)
-    except Exception:
-        return []
-
-def extract_host_port(node_url):
-    try:
-        parsed = urlparse(node_url)
-        if parsed.hostname and parsed.port:
-            return f"{parsed.hostname}:{parsed.port}"
-    except:
-        return None
-    return None
-
-async def tcp_ping(host, port, timeout=5):
-    loop = asyncio.get_event_loop()
-    try:
+        loop = asyncio.get_event_loop()
         await asyncio.wait_for(loop.getaddrinfo(host, port), timeout)
         start = time.perf_counter()
         reader, writer = await asyncio.wait_for(asyncio.open_connection(host, port), timeout)
@@ -51,7 +36,8 @@ async def tcp_ping(host, port, timeout=5):
     except Exception:
         return None
 
-async def test_single_node(node):
+# 测试单节点，返回延迟或None
+async def test_single_node(node: str):
     try:
         parsed = urlparse(node)
         host, port = parsed.hostname, parsed.port
@@ -64,107 +50,81 @@ async def test_single_node(node):
     except Exception:
         return None
 
-def print_progress_line(proto, current, total, delay, success_count):
-    delay_str = f"{delay}ms" if delay is not None else "timeout"
-    text = f"{proto} ({current}/{total}) 延迟: {delay_str} 成功: {success_count}  "
-    sys.stdout.write('\r' + text + ' ' * 20)
-    sys.stdout.flush()
+# 进度打印管理器
+class ProgressManager:
+    def __init__(self, proto, total):
+        self.proto = proto
+        self.total = total
+        self.success_count = 0
+        self.tested_count = 0
+        self.min_delay = None
+        self.lock = asyncio.Lock()
+        self.queue = asyncio.Queue()
+        self._stop = False
 
+    async def start(self):
+        while not self._stop:
+            idx, delay, success_update = await self.queue.get()
+            async with self.lock:
+                self.tested_count = idx
+                if success_update:
+                    self.success_count += 1
+                    if self.min_delay is None or delay < self.min_delay:
+                        self.min_delay = delay
+                delay_str = f"{delay}ms" if delay is not None else "timeout"
+                text = f"{self.proto} ({self.tested_count}/{self.total}) 延迟: {delay_str} 成功: {self.success_count}  "
+                print('\r' + text + ' ' * 10, end='', flush=True)
+            self.queue.task_done()
+        print()  # 结束后换行
+
+    async def report(self, idx, delay, success_update):
+        await self.queue.put((idx, delay, success_update))
+
+    def stop(self):
+        self._stop = True
+
+# 测试协议下所有节点
 async def test_protocol_nodes(proto, nodes):
     total = len(nodes)
-    success_count = 0
-    tested_count = 0
-    min_delay = None
-    sem = Semaphore(32)
+    prog = ProgressManager(proto, total)
+    sem = Semaphore(32)  # 限制并发数
+
+    # 启动打印进度任务
+    progress_task = asyncio.create_task(prog.start())
 
     async def test_node(idx, node):
-        nonlocal success_count, tested_count, min_delay
         async with sem:
             delay = await test_single_node(node)
-            tested_count += 1
-            if delay is not None:
-                success_count += 1
-                if min_delay is None or delay < min_delay:
-                    min_delay = delay
-            print_progress_line(proto, tested_count, total, delay, success_count)
+            success_update = delay is not None
+            await prog.report(idx, delay, success_update)
+            return node if success_update else None
 
-    start_time = time.perf_counter()
-    tasks = [test_node(idx + 1, node) for idx, node in enumerate(nodes)]
-    await asyncio.gather(*tasks)
-    end_time = time.perf_counter()
+    tasks = [test_node(i + 1, node) for i, node in enumerate(nodes)]
+    results = await asyncio.gather(*tasks)
 
-    elapsed = int((end_time - start_time) * 1000)
-    delay_str = f"{min_delay}ms" if min_delay is not None else "timeout"
-    # 测试完成后换行，避免下一条输出与进度挤在一起
-    print()
-    print(f"{proto} ({tested_count}/{total}) 延迟: {delay_str} 成功: {success_count} 测速耗时: {elapsed}ms")
+    await prog.queue.join()
+    prog.stop()
+    await progress_task
 
-    # 返回延迟合格节点列表
-    result = []
-    for node in nodes:
-        d = await test_single_node(node)
-        if d is not None:
-            result.append(node)
-    return result
+    tested_nodes = [node for node in results if node is not None]
+    return tested_nodes
 
 async def main():
-    print("📥 读取订阅链接...")
-    try:
-        with open(SUB_FILE, "r", encoding="utf-8") as f:
-            urls = [line.strip() for line in f if line.strip()]
-    except FileNotFoundError:
-        print(f"[错误] 未找到文件 {SUB_FILE}")
-        return
+    # 这里用示例 base64 编码的订阅数据，替换成你的抓取数据
+    example_sub = base64.b64encode(b"""
+hysteria2://host1:443
+hysteria2://host2:443
+hysteria2://host3:443
+    """).decode()
 
-    print("🌐 抓取订阅内容中...")
-    async with aiohttp.ClientSession() as session:
-        tasks = [fetch_subscription(session, url) for url in urls]
-        results = await asyncio.gather(*tasks)
+    nodes = base64_decode_links(example_sub)
+    proto = "hysteria2"
 
-    raw_nodes = []
-    for url, res in zip(urls, results):
-        if not res:
-            print(f"[警告] 抓取失败或无节点: {url}")
-        raw_nodes.extend(res)
+    print(f"🎯 去重后节点数: {len(nodes)}")
+    print(f"🚦 开始测试协议: {proto} 共 {len(nodes)} 个节点")
 
-    print(f"🎯 去重后节点数: {len(raw_nodes)}")
-
-    unique_nodes_map = {}
-    for node in raw_nodes:
-        key = extract_host_port(node)
-        if key and key not in unique_nodes_map:
-            unique_nodes_map[key] = node
-
-    all_nodes = list(unique_nodes_map.values())
-    print(f"🎯 去重后节点数: {len(all_nodes)}")
-
-    groups = {}
-    for node in all_nodes:
-        proto = node.split("://")[0]
-        groups.setdefault(proto, []).append(node)
-
-    for proto in sorted(groups.keys()):
-        print(f"🚦 开始测试协议: {proto} 共 {len(groups[proto])} 个节点")
-        tested_nodes = await test_protocol_nodes(proto, groups[proto])
-        groups[proto] = tested_nodes
-
-    tested_all = []
-    for nodes in groups.values():
-        tested_all.extend(nodes)
-
-    print(f"\n✅ 测试完成: 成功 {len(tested_all)} / 总 {len(all_nodes)}")
-
-    if not tested_all:
-        print("[结果] 无可用节点")
-        return
-
-    combined = "\n".join(tested_all)
-    encoded = base64.b64encode(combined.encode("utf-8")).decode("utf-8")
-
-    with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
-        f.write(encoded)
-
-    print(f"📦 有效节点已保存: {OUTPUT_FILE}（共 {len(tested_all)} 个）")
+    tested_nodes = await test_protocol_nodes(proto, nodes)
+    print(f"✅ {proto} 测试完成，成功节点数: {len(tested_nodes)}")
 
 if __name__ == "__main__":
     asyncio.run(main())
