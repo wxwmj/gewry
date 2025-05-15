@@ -2,11 +2,8 @@ name: Auto Update Sub
 
 on:
   schedule:
-    - cron: '0 * * * *'
-  workflow_dispatch:
-  push:
-    branches:
-      - main
+    - cron: '0 * * * *'   # 每小时的第0分钟运行
+  workflow_dispatch:       # 支持手动触发
 
 jobs:
   update-sub:
