@@ -2,7 +2,7 @@ name: Auto Update Sub
 
 on:
   schedule:
-    - cron: '0 * * * *'   # 每小时的第0分钟运行
+    - cron: '0 22-10 * * *'  # 对应北京时间的06:00~18:00，每小时执行一次
   workflow_dispatch:       # 支持手动触发
 
 jobs:
