@@ -1,0 +1,39 @@
+name: Auto Update Sub
+
+on:
+  schedule:
+    - cron: '0 * * * *'  # 每小时执行一次
+  workflow_dispatch:     # 允许手动触发
+  push:
+    branches:
+      - main
+
+jobs:
+  update-sub:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 📥 Checkout repository
+        uses: actions/checkout@v4
+
+      - name: 🔧 Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: 📦 Install dependencies
+        run: pip install aiohttp
+
+      - name: 🚀 Run Node Checker
+        run: python node_checker.py
+
+      - name: 🧹 Clean up git user config
+        run: |
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git config --global user.name "github-actions[bot]"
+
+      - name: 📤 Commit and push changes
+        run: |
+          git add sub
+          git commit -m "🤖 自动更新 sub 文件 $(date '+%Y-%m-%d %H:%M:%S')" || echo "No changes to commit"
+          git push
