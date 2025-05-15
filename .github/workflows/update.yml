@@ -22,18 +22,15 @@ jobs:
           python-version: '3.x'
 
       - name: 📦 Install dependencies
-        run: pip install aiohttp
+        run: pip install -r requirements.txt
 
       - name: 🚀 Run Node Checker
         run: python node_checker.py
 
-      - name: 🧹 Clean up git user config
+      - name: 📤 Commit and push updated sub
         run: |
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
           git config --global user.name "github-actions[bot]"
-
-      - name: 📤 Commit and push changes
-        run: |
           git add sub
-          git commit -m "🤖 自动更新 sub 文件 $(date '+%Y-%m-%d %H:%M:%S')" || echo "No changes to commit"
+          git commit -m "🤖 自动更新 sub 文件 $(date '+%Y-%m-%d %H:%M:%S')" || echo "无变化无需提交"
           git push
