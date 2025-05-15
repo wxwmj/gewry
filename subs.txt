@@ -1,4 +1,1 @@
-https://raw.githubusercontent.com/NiceVPN123/NiceVPN/main/Clash.yaml
-https://raw.githubusercontent.com/lagzian/SS-Collector/main/SS/trinity_clash.yaml
-https://raw.githubusercontent.com/lagzian/SS-Collector/main/SS/VM_TrinityBase
-https://raw.githubusercontent.com/lagzian/SS-Collector/main/SS/TrinityBase
+https://raw.githubusercontent.com/aiboboxx/v2rayfree/main/v2
