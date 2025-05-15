@@ -1,95 +1,156 @@
 import asyncio
+import aiohttp
 import base64
-from urllib.parse import urlparse
 import time
+from urllib.parse import urlparse
+from asyncio import Semaphore
 
-MAX_DELAY = 5000  # 最大延迟毫秒
+MAX_DELAY = 5000
+SUB_FILE = "subs.txt"
+OUTPUT_FILE = "sub"
+SUPPORTED_PROTOCOLS = ("vmess://", "ss://", "trojan://", "vless://", "hysteria://", "hysteria2://", "tuic://")
 
-# 简单判断是否支持的协议（你可根据实际扩展）
-def is_supported_node(url: str) -> bool:
-    return url.startswith((
-        "vmess://", "ss://", "trojan://", "vless://", "hysteria2://"
-    ))
+def is_supported_node(url):
+    return url.startswith(SUPPORTED_PROTOCOLS)
 
-# 解析base64或明文，过滤支持的节点
-def base64_decode_links(data: str):
+def base64_decode_links(data):
     try:
         decoded = base64.b64decode(data).decode("utf-8")
-        lines = [line.strip() for line in decoded.strip().splitlines()]
+        return [line.strip() for line in decoded.strip().splitlines() if is_supported_node(line)]
     except Exception:
-        lines = [line.strip() for line in data.strip().splitlines()]
-    return [line for line in lines if is_supported_node(line)]
+        return [line.strip() for line in data.strip().splitlines() if is_supported_node(line)]
 
-# TCP测速函数
-async def tcp_ping(host: str, port: int, timeout=5):
+async def fetch_subscription(session, url):
     try:
+        async with session.get(url, timeout=10) as resp:
+            raw = await resp.text()
+            return base64_decode_links(raw)
+    except Exception:
+        return []
+
+def extract_host_port(node_url):
+    try:
+        parsed = urlparse(node_url)
+        if parsed.hostname and parsed.port:
+            return f"{parsed.hostname}:{parsed.port}"
+    except:
+        return None
+    return None
+
+async def tcp_ping(host, port, timeout=5):
+    loop = asyncio.get_event_loop()
+    try:
+        await asyncio.wait_for(loop.getaddrinfo(host, port), timeout)
         start = time.perf_counter()
         reader, writer = await asyncio.wait_for(asyncio.open_connection(host, port), timeout)
         end = time.perf_counter()
         writer.close()
         await writer.wait_closed()
-        delay_ms = int((end - start) * 1000)
-        if delay_ms > MAX_DELAY:
-            return None
-        return delay_ms
+        return int((end - start) * 1000)
     except Exception:
         return None
 
-# 测试单个节点
-async def test_single_node(node: str):
-    parsed = urlparse(node)
-    host, port = parsed.hostname, parsed.port
-    if not host or not port:
+async def test_single_node(node):
+    try:
+        parsed = urlparse(node)
+        host, port = parsed.hostname, parsed.port
+        if not host or not port:
+            return None
+        delay = await tcp_ping(host, port, timeout=5)
+        if delay is None or delay > MAX_DELAY:
+            return None
+        return delay
+    except Exception:
         return None
-    return await tcp_ping(host, port)
 
-# 进度显示类，单行更新
-class ProgressManager:
-    def __init__(self, proto, total):
-        self.proto = proto
-        self.total = total
-        self.success_count = 0
-        self.tested_count = 0
-
-    def update(self, idx, delay):
-        self.tested_count = idx
-        if delay is not None:
-            self.success_count += 1
-        delay_str = f"{delay}ms" if delay is not None else "timeout"
-        print(f"\r{self.proto} ({self.tested_count}/{self.total}) 延迟: {delay_str} 成功: {self.success_count}  ", end="", flush=True)
+def print_progress_line(proto, current, total, delay, success_count):
+    delay_str = f"{delay}ms" if delay is not None else "timeout"
+    print(f"\r{proto} ({current}/{total}) 延迟: {delay_str} 成功: {success_count}  ", end='', flush=True)
 
 async def test_protocol_nodes(proto, nodes):
-    prog = ProgressManager(proto, len(nodes))
+    total = len(nodes)
+    success_count = 0
+    tested_count = 0
+    min_delay = None
+    sem = Semaphore(32)
 
-    sem = asyncio.Semaphore(32)
-
-    async def run_test(idx, node):
+    async def test_node(idx, node):
+        nonlocal success_count, tested_count, min_delay
         async with sem:
             delay = await test_single_node(node)
-            prog.update(idx, delay)
-            return node if delay is not None else None
+            tested_count += 1
+            if delay is not None:
+                success_count += 1
+                if min_delay is None or delay < min_delay:
+                    min_delay = delay
+            print_progress_line(proto, tested_count, total, delay, success_count)
 
-    tasks = [run_test(i + 1, node) for i, node in enumerate(nodes)]
-    results = await asyncio.gather(*tasks)
-    print()  # 换行
-    return [node for node in results if node is not None]
+    start_time = time.perf_counter()
+    tasks = [test_node(idx + 1, node) for idx, node in enumerate(nodes)]
+    await asyncio.gather(*tasks)
+    end_time = time.perf_counter()
+
+    elapsed = int((end_time - start_time) * 1000)
+    delay_str = f"{min_delay}ms" if min_delay is not None else "timeout"
+    # 打印一行换行总结
+    print(f"\n✅ {proto} 测试完成，成功节点数: {success_count} 测速耗时: {elapsed}ms")
+    return [node for node in nodes if await test_single_node(node) is not None]
 
 async def main():
-    # 真实可测速节点示例，端口改成你要测速的端口，地址改成真实有效域名/IP
-    # 这里用公共HTTP端口作为示范（不要用hysteria2协议写法，改成支持测试的格式）
-    example_nodes = [
-        "hysteria2://google.com:80",
-        "hysteria2://cloudflare.com:80",
-        "hysteria2://invalid.domain:80",  # 这会timeout
-    ]
+    print("📥 读取订阅链接...")
+    try:
+        with open(SUB_FILE, "r", encoding="utf-8") as f:
+            urls = [line.strip() for line in f if line.strip()]
+    except FileNotFoundError:
+        print(f"[错误] 未找到文件 {SUB_FILE}")
+        return
 
-    proto = "hysteria2"
-    print(f"🎯 去重后节点数: {len(example_nodes)}")
-    print(f"🚦 开始测试协议: {proto} 共 {len(example_nodes)} 个节点")
+    print("🌐 抓取订阅内容中...")
+    async with aiohttp.ClientSession() as session:
+        tasks = [fetch_subscription(session, url) for url in urls]
+        results = await asyncio.gather(*tasks)
 
-    tested = await test_protocol_nodes(proto, example_nodes)
+    raw_nodes = []
+    for url, res in zip(urls, results):
+        if not res:
+            print(f"[警告] 抓取失败或无节点: {url}")
+        raw_nodes.extend(res)
 
-    print(f"✅ {proto} 测试完成，成功节点数: {len(tested)}")
+    print(f"🎯 去重后节点数: {len(raw_nodes)}")
+
+    unique_nodes_map = {}
+    for node in raw_nodes:
+        key = extract_host_port(node)
+        if key and key not in unique_nodes_map:
+            unique_nodes_map[key] = node
+
+    all_nodes = list(unique_nodes_map.values())
+    print(f"🎯 去重后节点数: {len(all_nodes)}")
+
+    groups = {}
+    for node in all_nodes:
+        proto = node.split("://")[0]
+        groups.setdefault(proto, []).append(node)
+
+    tested_all = []
+    for proto in sorted(groups.keys()):
+        print(f"🚦 开始测试协议: {proto} 共 {len(groups[proto])} 个节点")
+        tested_nodes = await test_protocol_nodes(proto, groups[proto])
+        tested_all.extend(tested_nodes)
+
+    print(f"\n✅ 测试完成: 成功 {len(tested_all)} / 总 {len(all_nodes)}")
+
+    if not tested_all:
+        print("[结果] 无可用节点")
+        return
+
+    combined = "\n".join(tested_all)
+    encoded = base64.b64encode(combined.encode("utf-8")).decode("utf-8")
+
+    with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
+        f.write(encoded)
+
+    print(f"📦 有效节点已保存: {OUTPUT_FILE}（共 {len(tested_all)} 个）")
 
 if __name__ == "__main__":
     asyncio.run(main())
