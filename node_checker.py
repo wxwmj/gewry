@@ -70,22 +70,31 @@ def print_progress_line(proto, current, total, delay, success_count):
 async def test_protocol_nodes(proto, nodes):
     total = len(nodes)
     success_count = 0
-    valid_nodes = []
+    tested_count = 0
+    min_delay = None
     sem = Semaphore(32)
 
     async def test_node(idx, node):
-        nonlocal success_count
+        nonlocal success_count, tested_count, min_delay
         async with sem:
             delay = await test_single_node(node)
+            tested_count += 1
             if delay is not None:
                 success_count += 1
-                valid_nodes.append(node)
-            print_progress_line(proto, idx, total, delay, success_count)
+                if min_delay is None or delay < min_delay:
+                    min_delay = delay
+            print_progress_line(proto, tested_count, total, delay, success_count)
 
+    start_time = time.perf_counter()
     tasks = [test_node(idx + 1, node) for idx, node in enumerate(nodes)]
     await asyncio.gather(*tasks)
-    print()
-    return valid_nodes
+    end_time = time.perf_counter()
+
+    elapsed = int((end_time - start_time) * 1000)
+    delay_str = f"{min_delay}ms" if min_delay is not None else "timeout"
+    print(f"{proto} ({tested_count}/{total}) 延迟: {delay_str} 成功: {success_count} 测速耗时: {elapsed}ms")
+
+    return [node for node in nodes if await test_single_node(node) is not None]
 
 async def main():
     print("📥 读取订阅链接...")
