@@ -92,9 +92,16 @@ async def test_protocol_nodes(proto, nodes):
 
     elapsed = int((end_time - start_time) * 1000)
     delay_str = f"{min_delay}ms" if min_delay is not None else "timeout"
-    # 打印一行换行总结
-    print(f"\n✅ {proto} 测试完成，成功节点数: {success_count} 测速耗时: {elapsed}ms")
-    return [node for node in nodes if await test_single_node(node) is not None]
+    print()  # 换行
+    print(f"✅ {proto} 测试完成，成功节点数: {success_count}，测速耗时: {elapsed}ms")
+
+    # 过滤只保留成功的节点
+    results = []
+    for node in nodes:
+        delay = await test_single_node(node)
+        if delay is not None:
+            results.append(node)
+    return results
 
 async def main():
     print("📥 读取订阅链接...")
@@ -125,7 +132,6 @@ async def main():
             unique_nodes_map[key] = node
 
     all_nodes = list(unique_nodes_map.values())
-    print(f"🎯 去重后节点数: {len(all_nodes)}")
 
     groups = {}
     for node in all_nodes:
@@ -138,7 +144,7 @@ async def main():
         tested_nodes = await test_protocol_nodes(proto, groups[proto])
         tested_all.extend(tested_nodes)
 
-    print(f"\n✅ 测试完成: 成功 {len(tested_all)} / 总 {len(all_nodes)}")
+    print(f"\n✅ 测试全部完成，成功 {len(tested_all)} / 总 {len(all_nodes)}")
 
     if not tested_all:
         print("[结果] 无可用节点")
