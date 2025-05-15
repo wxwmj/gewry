@@ -65,14 +65,16 @@ async def test_single_node(node):
 
 def print_progress_line(proto, current, total, delay, success_count):
     delay_str = f"{delay}ms" if delay is not None else "timeout"
-    print(f"{proto} ({current}/{total}) 延迟: {delay_str} 成功: {success_count}  ", end="\r")
+    print(f"{proto} ({current}/{total}) 延迟: {delay_str} 成功: {success_count}  ", end="\r", flush=True)
 
 async def test_protocol_nodes(proto, nodes):
     total = len(nodes)
     success_count = 0
     tested_count = 0
     min_delay = None
-    sem = Semaphore(32)
+    sem = Semaphore(8)  # 降低并发
+
+    valid_nodes = []
 
     async def test_node(idx, node):
         nonlocal success_count, tested_count, min_delay
@@ -83,6 +85,7 @@ async def test_protocol_nodes(proto, nodes):
                 success_count += 1
                 if min_delay is None or delay < min_delay:
                     min_delay = delay
+                valid_nodes.append(node)
             print_progress_line(proto, tested_count, total, delay, success_count)
 
     start_time = time.perf_counter()
@@ -94,7 +97,7 @@ async def test_protocol_nodes(proto, nodes):
     delay_str = f"{min_delay}ms" if min_delay is not None else "timeout"
     print(f"{proto} ({tested_count}/{total}) 延迟: {delay_str} 成功: {success_count} 测速耗时: {elapsed}ms")
 
-    return [node for node in nodes if await test_single_node(node) is not None]
+    return valid_nodes  # 直接返回已测试通过的节点列表
 
 async def main():
     print("📥 读取订阅链接...")
@@ -135,7 +138,12 @@ async def main():
     tested_all = []
     for proto in sorted(groups.keys()):
         print(f"🚦 开始测试协议: {proto} 共 {len(groups[proto])} 个节点")
-        tested_nodes = await test_protocol_nodes(proto, groups[proto])
+        try:
+            # 整个测速最多30秒超时限制
+            tested_nodes = await asyncio.wait_for(test_protocol_nodes(proto, groups[proto]), timeout=30)
+        except asyncio.TimeoutError:
+            print(f"[超时] 协议 {proto} 测速超时，跳过剩余节点")
+            tested_nodes = []
         tested_all.extend(tested_nodes)
 
     print(f"\n✅ 测试完成: 成功 {len(tested_all)} / 总 {len(all_nodes)}")
@@ -153,4 +161,7 @@ async def main():
     print(f"📦 有效节点已保存: {OUTPUT_FILE}（共 {len(tested_all)} 个）")
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        print("程序被用户中断")
