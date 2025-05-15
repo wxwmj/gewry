@@ -7,7 +7,7 @@ from asyncio import Semaphore
 
 MAX_DELAY = 5000
 SUB_FILE = "subs.txt"
-OUTPUT_FILE = "sub"
+OUTPUT_FILE = "sub.base64.txt"
 SUPPORTED_PROTOCOLS = ("vmess://", "ss://", "trojan://", "vless://", "hysteria://", "hysteria2://", "tuic://")
 
 def is_supported_node(url):
@@ -18,6 +18,7 @@ def base64_decode_links(data):
         decoded = base64.b64decode(data).decode("utf-8")
         return [line.strip() for line in decoded.strip().splitlines() if is_supported_node(line)]
     except Exception:
+        # fallback to raw lines
         return [line.strip() for line in data.strip().splitlines() if is_supported_node(line)]
 
 async def fetch_subscription(session, url):
@@ -65,43 +66,27 @@ async def test_single_node(node):
 
 def print_progress_line(proto, current, total, delay, success_count):
     delay_str = f"{delay}ms" if delay is not None else "timeout"
-    print(f"\r{proto} ({current}/{total}) 延迟: {delay_str} 成功: {success_count}  ", end='', flush=True)
+    print(f"{proto} ({current}/{total}) 延迟: {delay_str} 成功: {success_count}  ", end="\r")
 
 async def test_protocol_nodes(proto, nodes):
     total = len(nodes)
     success_count = 0
-    tested_count = 0
-    min_delay = None
+    valid_nodes = []
     sem = Semaphore(32)
 
     async def test_node(idx, node):
-        nonlocal success_count, tested_count, min_delay
+        nonlocal success_count
         async with sem:
             delay = await test_single_node(node)
-            tested_count += 1
             if delay is not None:
                 success_count += 1
-                if min_delay is None or delay < min_delay:
-                    min_delay = delay
-            print_progress_line(proto, tested_count, total, delay, success_count)
+                valid_nodes.append(node)
+            print_progress_line(proto, idx, total, delay, success_count)
 
-    start_time = time.perf_counter()
     tasks = [test_node(idx + 1, node) for idx, node in enumerate(nodes)]
     await asyncio.gather(*tasks)
-    end_time = time.perf_counter()
-
-    elapsed = int((end_time - start_time) * 1000)
-    delay_str = f"{min_delay}ms" if min_delay is not None else "timeout"
-    print()  # 换行
-    print(f"✅ {proto} 测试完成，成功节点数: {success_count}，测速耗时: {elapsed}ms")
-
-    # 过滤只保留成功的节点
-    results = []
-    for node in nodes:
-        delay = await test_single_node(node)
-        if delay is not None:
-            results.append(node)
-    return results
+    print()
+    return valid_nodes
 
 async def main():
     print("📥 读取订阅链接...")
@@ -123,8 +108,9 @@ async def main():
             print(f"[警告] 抓取失败或无节点: {url}")
         raw_nodes.extend(res)
 
-    print(f"🎯 去重后节点数: {len(raw_nodes)}")
+    print(f"📊 抓取完成，节点总数（含重复）: {len(raw_nodes)}")
 
+    # 按 host:port 去重
     unique_nodes_map = {}
     for node in raw_nodes:
         key = extract_host_port(node)
@@ -132,6 +118,7 @@ async def main():
             unique_nodes_map[key] = node
 
     all_nodes = list(unique_nodes_map.values())
+    print(f"🎯 去重后节点数: {len(all_nodes)}")
 
     groups = {}
     for node in all_nodes:
@@ -144,7 +131,7 @@ async def main():
         tested_nodes = await test_protocol_nodes(proto, groups[proto])
         tested_all.extend(tested_nodes)
 
-    print(f"\n✅ 测试全部完成，成功 {len(tested_all)} / 总 {len(all_nodes)}")
+    print(f"\n✅ 测试完成: 成功 {len(tested_all)} / 总 {len(all_nodes)}")
 
     if not tested_all:
         print("[结果] 无可用节点")
