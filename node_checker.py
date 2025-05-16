@@ -10,7 +10,6 @@ MAX_SAVE = 1000
 SUB_FILE = "subs.txt"
 OUTPUT_FILE = "sub"
 SUPPORTED_PROTOCOLS = ("vmess://", "ss://", "trojan://", "vless://", "hysteria://", "hysteria2://", "tuic://")
-BATCH_SIZE = 1000  # 每批测速节点数
 
 def is_supported_node(url):
     return url.startswith(SUPPORTED_PROTOCOLS)
@@ -51,10 +50,9 @@ async def tcp_ping(host, port, timeout=5):
         writer.close()
         await writer.wait_closed()
         delay_ms = int((end - start) * 1000)
-        # 不打印成功日志，减少刷屏
         return delay_ms
-    except Exception as e:
-        print(f"[测速] 连接失败 {host}:{port} 错误: {e}")
+    except Exception:
+        # 不打印失败详情，直接返回 None
         return None
 
 async def test_single_node(node):
@@ -70,9 +68,6 @@ async def test_single_node(node):
     except Exception:
         return None
 
-def print_progress(percent, success_count):
-    print(f"测试进度: {percent:.0f}% | 成功节点数: {success_count}")
-
 async def test_all_nodes(nodes):
     total = len(nodes)
     success_count = 0
@@ -80,43 +75,29 @@ async def test_all_nodes(nodes):
     results = []
     sem = Semaphore(32)
 
-    next_print_percent = 10
+    progress_thresholds = set(range(10, 101, 10))  # 10%, 20%, ..., 100%
+    last_printed_percent = 0
 
     async def test_node(node):
-        nonlocal success_count, done_count, next_print_percent
+        nonlocal success_count, done_count, last_printed_percent
         async with sem:
             res = await test_single_node(node)
             done_count += 1
             if res is not None:
                 results.append(res)
                 success_count += 1
-            percent = done_count / total * 100
-            if percent >= next_print_percent:
-                print_progress(next_print_percent, success_count)
-                next_print_percent += 10
+
+            percent = int(done_count / total * 100)
+            if percent in progress_thresholds and percent != last_printed_percent:
+                print(f"测试进度: {percent}% | 成功节点数: {success_count}")
+                last_printed_percent = percent
 
     tasks = [test_node(node) for node in nodes]
     await asyncio.gather(*tasks)
-    # 最后确保100%进度打印
-    if next_print_percent <= 100:
-        print_progress(100, success_count)
 
     results.sort(key=lambda x: x[1])
     top_nodes = [node for node, delay in results[:MAX_SAVE]]
-
     return top_nodes
-
-async def batch_test_nodes(all_nodes):
-    total = len(all_nodes)
-    print(f"节点总数: {total}，分批测速，每批 {BATCH_SIZE} 个节点")
-    all_results = []
-    for i in range(0, total, BATCH_SIZE):
-        batch_nodes = all_nodes[i:i+BATCH_SIZE]
-        print(f"\n▶️ 开始测速批次 {i//BATCH_SIZE + 1}，节点数: {len(batch_nodes)}")
-        batch_results = await test_all_nodes(batch_nodes)
-        all_results.extend(batch_results)
-        print(f"✅ 批次 {i//BATCH_SIZE + 1} 测速完成，有效节点数: {len(batch_results)}")
-    return all_results
 
 async def main():
     print("📥 读取订阅链接...")
@@ -149,16 +130,14 @@ async def main():
     unique_nodes = list(unique_nodes_map.values())
     print(f"🎯 去重后节点数: {len(unique_nodes)}")
 
-    print(f"🚦 开始节点分批延迟测试...")
-    tested_nodes = await batch_test_nodes(unique_nodes)
+    print(f"🚦 开始节点延迟测试，共 {len(unique_nodes)} 个节点")
+    tested_nodes = await test_all_nodes(unique_nodes)
 
-    print(f"\n✅ 所有批次测速完成: 成功 {len(tested_nodes)} / 总 {len(unique_nodes)}")
+    print(f"\n✅ 测试完成: 成功 {len(tested_nodes)} / 总 {len(unique_nodes)}")
 
     if not tested_nodes:
         print("[结果] 无可用节点")
         return
-
-    tested_nodes = tested_nodes[:MAX_SAVE]
 
     combined = "\n".join(tested_nodes)
     encoded = base64.b64encode(combined.encode("utf-8")).decode("utf-8")
