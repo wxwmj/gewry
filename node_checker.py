@@ -4,7 +4,7 @@ import base64
 import time
 from urllib.parse import urlparse
 from asyncio import Semaphore
-import sys
+from tqdm.asyncio import tqdm_asyncio
 
 MAX_DELAY = 5000
 MAX_SAVE = 1000
@@ -64,26 +64,24 @@ async def test_single_node(node):
         return None
 
 async def test_all_nodes(nodes):
-    total = len(nodes)
-    success_count = 0
-    done_count = 0
-    results = []
     sem = Semaphore(32)
+    results = []
 
     async def test_node(node):
-        nonlocal success_count, done_count
         async with sem:
             delay = await test_single_node(node)
             if delay is not None and delay <= MAX_DELAY:
-                results.append((node, delay))
-                success_count += 1
-            done_count += 1
-            # 每10个节点或者全部完成时打印进度，避免日志刷屏
-            if done_count % 10 == 0 or done_count == total:
-                print(f"测试进度 ({done_count}/{total}) 成功: {success_count}")
+                return (node, delay)
+            return None
 
     tasks = [test_node(node) for node in nodes]
-    await asyncio.gather(*tasks)
+    results = []
+
+    # tqdm_asyncio.as_completed 迭代完成的任务，显示进度条
+    async for coro in tqdm_asyncio.as_completed(tasks, total=len(nodes), desc="测试节点进度"):
+        res = await coro
+        if res:
+            results.append(res)
 
     # 按延迟排序，取前MAX_SAVE条
     results.sort(key=lambda x: x[1])
