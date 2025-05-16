@@ -66,35 +66,29 @@ async def test_single_node(node):
     except Exception:
         return None
 
-line_template = "测试节点进度: {percent:6.2f}% | 成功: {success_count}"
-max_len = 50  # 估计最大行长度
-
-def print_progress(percent, success_count):
-    line = line_template.format(percent=percent, success_count=success_count)
-    padded_line = line + " " * (max_len - len(line))
-    print("\r" + padded_line, end="", flush=True)
-
 async def test_all_nodes(nodes):
     total = len(nodes)
     success_count = 0
     done_count = 0
+    last_logged_percent = 0
     results = []
     sem = Semaphore(32)
 
     async def test_node(node):
-        nonlocal success_count, done_count
+        nonlocal success_count, done_count, last_logged_percent
         async with sem:
             res = await test_single_node(node)
             if res is not None:
                 results.append(res)
                 success_count += 1
             done_count += 1
-            percent = done_count / total * 100
-            print_progress(percent, success_count)
+            percent = int(done_count / total * 100)
+            if percent >= last_logged_percent + 10:
+                last_logged_percent = percent - percent % 10  # 向下取整为10的倍数
+                print(f"📊 测试进度：{last_logged_percent}% | 成功: {success_count}")
 
     tasks = [test_node(node) for node in nodes]
     await asyncio.gather(*tasks)
-    print()  # 换行，避免进度条卡在同一行
 
     results.sort(key=lambda x: x[1])
     top_nodes = [node for node, delay in results[:MAX_SAVE]]
