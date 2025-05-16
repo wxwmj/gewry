@@ -8,7 +8,7 @@ import sys
 
 MAX_DELAY = 5000
 SUB_FILE = "subs.txt"
-OUTPUT_FILE = "sub"  # 输出文件名改为 sub（无扩展名）
+OUTPUT_FILE = "sub"  # 输出文件名为 sub（无扩展名）
 SUPPORTED_PROTOCOLS = ("vmess://", "ss://", "trojan://", "vless://", "hysteria://", "hysteria2://", "tuic://")
 
 def is_supported_node(url):
@@ -64,13 +64,7 @@ async def test_single_node(node):
     except Exception:
         return None
 
-def print_progress_line(proto, current, total, delay, success_count):
-    delay_str = f"{delay}ms" if delay is not None else "timeout"
-    # 使用 sys.stdout.write 和 flush 进行一行动态刷新
-    sys.stdout.write(f"\r{proto} ({current}/{total}) 延迟: {delay_str} 成功: {success_count}   ")
-    sys.stdout.flush()
-
-async def test_protocol_nodes(proto, nodes):
+async def test_all_nodes(nodes):
     total = len(nodes)
     success_count = 0
     valid_nodes = []
@@ -83,11 +77,13 @@ async def test_protocol_nodes(proto, nodes):
             if delay is not None:
                 success_count += 1
                 valid_nodes.append(node)
-            print_progress_line(proto, idx, total, delay, success_count)
+            delay_str = f"{delay}ms" if delay else "timeout"
+            sys.stdout.write(f"\r测试进度 ({idx}/{total}) 延迟: {delay_str} 成功: {success_count}   ")
+            sys.stdout.flush()
 
-    tasks = [test_node(idx + 1, node) for idx, node in enumerate(nodes)]
+    tasks = [test_node(i + 1, node) for i, node in enumerate(nodes)]
     await asyncio.gather(*tasks)
-    print()  # 换行，避免下一条打印覆盖当前进度行
+    print()
     return valid_nodes
 
 async def main():
@@ -106,9 +102,11 @@ async def main():
 
     raw_nodes = []
     for url, res in zip(urls, results):
-        if not res:
-            print(f"[警告] 抓取失败或无节点: {url}")
-        raw_nodes.extend(res)
+        if res:
+            print(f"[✓] 抓取成功: {url}  节点数: {len(res)}")
+            raw_nodes.extend(res)
+        else:
+            print(f"[×] 抓取失败: {url}")
 
     print(f"📊 抓取完成，节点总数（含重复）: {len(raw_nodes)}")
 
@@ -121,16 +119,8 @@ async def main():
     all_nodes = list(unique_nodes_map.values())
     print(f"🎯 去重后节点数: {len(all_nodes)}")
 
-    groups = {}
-    for node in all_nodes:
-        proto = node.split("://")[0]
-        groups.setdefault(proto, []).append(node)
-
-    tested_all = []
-    for proto in sorted(groups.keys()):
-        print(f"🚦 开始测试协议: {proto} 共 {len(groups[proto])} 个节点")
-        tested_nodes = await test_protocol_nodes(proto, groups[proto])
-        tested_all.extend(tested_nodes)
+    print(f"🚦 开始节点延迟测试，共 {len(all_nodes)} 个节点")
+    tested_all = await test_all_nodes(all_nodes)
 
     print(f"\n✅ 测试完成: 成功 {len(tested_all)} / 总 {len(all_nodes)}")
 
