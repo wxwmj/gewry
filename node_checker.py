@@ -5,7 +5,6 @@ import time
 from urllib.parse import urlparse
 from asyncio import Semaphore
 import sys
-from tqdm import tqdm
 
 MAX_DELAY = 5000
 MAX_SAVE = 1000
@@ -21,30 +20,7 @@ def base64_decode_links(data):
         decoded = base64.b64decode(data).decode("utf-8")
         return [line.strip() for line in decoded.strip().splitlines() if is_supported_node(line)]
     except Exception:
-        # 解码失败当作纯文本逐行处理
         return [line.strip() for line in data.strip().splitlines() if is_supported_node(line)]
-
-def extract_host_port(node_url):
-    try:
-        parsed = urlparse(node_url)
-        host = parsed.hostname
-        port = parsed.port
-
-        if port is None:
-            return None
-
-        if not (1 <= port <= 65535):
-            print(f"[警告] 端口超出范围或非法: {port}，节点: {node_url}")
-            return None
-
-        if host is None:
-            return None
-
-        return f"{host}:{port}"
-
-    except Exception as e:
-        print(f"[警告] 节点地址解析异常 {node_url}: {e}")
-        return None
 
 async def fetch_subscription(session, url):
     try:
@@ -53,6 +29,19 @@ async def fetch_subscription(session, url):
             return base64_decode_links(raw)
     except Exception:
         return []
+
+def extract_host_port(node_url):
+    try:
+        parsed = urlparse(node_url)
+        if parsed.hostname and parsed.port:
+            # 端口必须是整数且合理范围内
+            port = int(parsed.port)
+            if 0 < port < 65536:
+                return f"{parsed.hostname}:{port}"
+    except Exception as e:
+        print(f"[警告] 节点地址解析异常 {node_url}: {e}")
+        return None
+    return None
 
 async def tcp_ping(host, port, timeout=5):
     loop = asyncio.get_event_loop()
@@ -76,31 +65,33 @@ async def test_single_node(node):
         delay = await tcp_ping(host, port, timeout=5)
         if delay is None or delay > MAX_DELAY:
             return None
-        return delay
+        return node, delay
     except Exception:
         return None
 
 async def test_all_nodes(nodes):
-    sem = Semaphore(32)
+    total = len(nodes)
+    success_count = 0
+    done_count = 0
     results = []
+    sem = Semaphore(32)
 
     async def test_node(node):
+        nonlocal success_count, done_count
         async with sem:
-            delay = await test_single_node(node)
-            if delay is not None and delay <= MAX_DELAY:
-                return (node, delay)
-            return None
-
-    tasks = [asyncio.create_task(test_node(node)) for node in nodes]
-
-    for coro in tqdm(asyncio.as_completed(tasks), total=len(nodes), desc="测试节点进度"):
-        try:
-            res = await coro
-            if res:
+            res = await test_single_node(node)
+            if res is not None:
                 results.append(res)
-        except Exception as e:
-            print(f"[异常] 单节点测试出错: {e}")
+                success_count += 1
+            done_count += 1
+            percent = done_count / total * 100
+            print(f"\r测试节点进度: {percent:6.2f}% | 成功: {success_count} / {done_count} / {total}", end="", flush=True)
 
+    tasks = [test_node(node) for node in nodes]
+    await asyncio.gather(*tasks)
+    print()  # 换行
+
+    # 按延迟排序，取前MAX_SAVE条
     results.sort(key=lambda x: x[1])
     top_nodes = [node for node, delay in results[:MAX_SAVE]]
 
