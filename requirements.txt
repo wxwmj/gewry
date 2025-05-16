@@ -1,5 +1,7 @@
 aiohttp
 python-dotenv
+aiohttp
 tqdm>=4.62
 aiohttp_socks
-aiohttp openai
+aiohttp 
+openai
