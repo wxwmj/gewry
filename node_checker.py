@@ -1,19 +1,17 @@
 import asyncio
 import aiohttp
 import base64
-import os
 import time
+import os
 from urllib.parse import urlparse
-from asyncio import Semaphore
-import openai
 
 MAX_DELAY = 5000  # 最大延迟 ms
 MAX_SAVE = 1000   # 最大保存节点数
 SUB_FILE = "subs.txt"  # 订阅链接文件名
 OUTPUT_FILE = "sub"    # 输出文件名
 SUPPORTED_PROTOCOLS = ("vmess://", "ss://", "trojan://", "vless://", "hysteria://", "hysteria2://", "tuic://")
+
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-OPENAI_TEST_TIMEOUT = 5  # 测试ChatGPT连接超时时间(秒)
 
 def is_supported_node(url):
     return url.startswith(SUPPORTED_PROTOCOLS)
@@ -27,11 +25,13 @@ def base64_decode_links(data):
 
 async def fetch_subscription(session, url):
     try:
-        async with session.get(url, timeout=5) as resp:
+        async with session.get(url, timeout=5) as resp:  # 抓取超时5秒
             raw = await resp.text()
-            return base64_decode_links(raw), None
-    except Exception:
-        return [], url  # 返回失败的链接，方便注释
+            return base64_decode_links(raw)
+    except Exception as e:
+        print(f"[失败] 抓取订阅失败，请确认链接是否有效，并建议注释该链接：{url}")
+        print(f"     具体错误: {e}")
+        return []
 
 def extract_host_port(node_url):
     try:
@@ -44,50 +44,65 @@ def extract_host_port(node_url):
         return None
     return None
 
-async def tcp_ping(host, port, timeout=3):
+async def tcp_ping(host, port, timeout=5):  # 超时改为5秒
     try:
         start = time.perf_counter()
         reader, writer = await asyncio.wait_for(asyncio.open_connection(host, port), timeout)
         end = time.perf_counter()
         writer.close()
         await writer.wait_closed()
-        return int((end - start) * 1000)
-    except Exception:
+        delay = int((end - start) * 1000)
+        print(f"测速成功: {host}:{port} 延迟 {delay}ms")
+        return delay
+    except Exception as e:
+        print(f"测速失败: {host}:{port} 错误: {e}")
         return None
+
+async def check_chatgpt_connectivity():
+    if not OPENAI_API_KEY:
+        print("[错误] 环境变量 OPENAI_API_KEY 未设置，无法检测 ChatGPT 连通性")
+        return False
+    url = "https://api.openai.com/v1/chat/completions"
+    headers = {
+        "Authorization": f"Bearer {OPENAI_API_KEY}",
+        "Content-Type": "application/json",
+    }
+    json_data = {
+        "model": "gpt-3.5-turbo",
+        "messages": [{"role": "user", "content": "Hello"}],
+        "max_tokens": 1,
+    }
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(url, headers=headers, json=json_data, timeout=10) as resp:
+                if resp.status == 200:
+                    print("ChatGPT 连通测试成功")
+                    return True
+                else:
+                    print(f"[错误] ChatGPT 连通测试失败，状态码: {resp.status}")
+                    return False
+    except Exception as e:
+        print(f"[错误] ChatGPT 连通测试异常: {e}")
+        return False
 
 async def test_single_node(node):
     try:
         parsed = urlparse(node)
         host, port = parsed.hostname, parsed.port
         if not host or not port:
+            print(f"节点格式错误，无法解析 host 或 port: {node}")
             return None
-        delay = await tcp_ping(host, port, timeout=3)
+        delay = await tcp_ping(host, port, timeout=5)
         if delay is None or delay > MAX_DELAY:
             return None
-        # 测试ChatGPT连通性
-        if not OPENAI_API_KEY:
-            print("[警告] OPENAI_API_KEY 未设置，跳过 ChatGPT 连通检测")
-            return node, delay
-        try:
-            openai.api_key = OPENAI_API_KEY
-            # 使用asyncio.to_thread调用同步接口防止阻塞
-            def openai_test_call():
-                completion = openai.ChatCompletion.create(
-                    model="gpt-3.5-turbo",
-                    messages=[{"role": "user", "content": "Ping"}],
-                    max_tokens=1,
-                    temperature=0,
-                )
-                return completion.choices[0].message.content.strip()
-            # 设置超时限制
-            reply = await asyncio.wait_for(asyncio.to_thread(openai_test_call), timeout=OPENAI_TEST_TIMEOUT)
-            if reply:
-                return node, delay
-            else:
-                return None
-        except Exception:
+        # ChatGPT检测
+        chatgpt_ok = await check_chatgpt_connectivity()
+        if not chatgpt_ok:
+            print(f"节点 {node} 延迟合格，但 ChatGPT 连通检测未通过")
             return None
-    except Exception:
+        return node, delay
+    except Exception as e:
+        print(f"节点测试异常: {e}")
         return None
 
 def print_progress(percent, success_count):
@@ -101,7 +116,7 @@ async def test_all_nodes(nodes):
     success_count = 0
     done_count = 0
     results = []
-    sem = Semaphore(32)
+    sem = asyncio.Semaphore(32)
     last_print_percent = 0
 
     async def test_node(node):
@@ -119,7 +134,7 @@ async def test_all_nodes(nodes):
 
     tasks = [test_node(node) for node in nodes]
     await asyncio.gather(*tasks)
-    print()  # 换行避免进度卡在一行
+    print()  # 换行避免进度卡住一行
 
     results.sort(key=lambda x: x[1])
     return [node for node, delay in results[:MAX_SAVE]]
@@ -128,7 +143,7 @@ async def main():
     print("📥 读取订阅链接...")
     try:
         with open(SUB_FILE, "r", encoding="utf-8") as f:
-            urls = [line.strip() for line in f if line.strip()]
+            urls = [line.strip() for line in f if line.strip() and not line.strip().startswith("#")]
     except FileNotFoundError:
         print(f"[错误] 未找到文件 {SUB_FILE}")
         return
@@ -138,29 +153,31 @@ async def main():
         all_nodes = []
         failed_urls = []
         for url in urls:
-            nodes, failed_url = await fetch_subscription(session, url)
+            nodes = await fetch_subscription(session, url)
             if nodes:
                 print(f"[成功] 抓取订阅：{url}，节点数: {len(nodes)}")
                 all_nodes.extend(nodes)
-            if failed_url:
-                failed_urls.append(failed_url)
-
-    print(f"📊 抓取完成，节点总数（含重复）: {len(all_nodes)}")
+            else:
+                failed_urls.append(url)
 
     # 失败订阅自动注释写回文件
     if failed_urls:
-        print(f"⚠️ 发现抓取失败订阅链接 {len(failed_urls)} 个，正在添加注释...")
-        with open(SUB_FILE, "r", encoding="utf-8") as f:
-            lines = f.readlines()
-        with open(SUB_FILE, "w", encoding="utf-8") as f:
-            for line in lines:
-                stripped = line.strip()
-                if stripped in failed_urls and not stripped.startswith("#"):
-                    f.write("# " + line)
-                else:
-                    f.write(line)
+        print(f"✍️ 标记失败订阅链接为注释...")
+        try:
+            with open(SUB_FILE, "r", encoding="utf-8") as f:
+                lines = f.readlines()
+            with open(SUB_FILE, "w", encoding="utf-8") as f:
+                for line in lines:
+                    if any(url in line for url in failed_urls) and not line.startswith("#"):
+                        f.write("# " + line)
+                    else:
+                        f.write(line)
+        except Exception as e:
+            print(f"[错误] 失败订阅注释写回失败: {e}")
 
-    # 去重，key = host:port
+    print(f"📊 抓取完成，节点总数（含重复）: {len(all_nodes)}")
+
+    # 去重逻辑优化，key = host:port
     unique_nodes_map = {}
     for node in all_nodes:
         key = extract_host_port(node)
@@ -188,6 +205,4 @@ async def main():
     print(f"📦 有效节点已保存: {OUTPUT_FILE}（共 {len(tested_nodes)} 个）")
 
 if __name__ == "__main__":
-    if not OPENAI_API_KEY:
-        print("[错误] 环境变量 OPENAI_API_KEY 未设置，无法检测 ChatGPT 连通性")
     asyncio.run(main())
