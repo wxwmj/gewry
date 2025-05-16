@@ -7,8 +7,9 @@ from asyncio import Semaphore
 import sys
 
 MAX_DELAY = 5000
+MAX_OUTPUT_NODES = 1000
 SUB_FILE = "subs.txt"
-OUTPUT_FILE = "sub"  # 输出文件名为 sub（无扩展名）
+OUTPUT_FILE = "sub"
 SUPPORTED_PROTOCOLS = ("vmess://", "ss://", "trojan://", "vless://", "hysteria://", "hysteria2://", "tuic://")
 
 def is_supported_node(url):
@@ -67,7 +68,7 @@ async def test_single_node(node):
 async def test_all_nodes(nodes):
     total = len(nodes)
     success_count = 0
-    valid_nodes = []
+    results = []
     sem = Semaphore(32)
 
     async def test_node(idx, node):
@@ -75,8 +76,8 @@ async def test_all_nodes(nodes):
         async with sem:
             delay = await test_single_node(node)
             if delay is not None:
+                results.append((node, delay))
                 success_count += 1
-                valid_nodes.append(node)
             delay_str = f"{delay}ms" if delay else "timeout"
             sys.stdout.write(f"\r测试进度 ({idx}/{total}) 延迟: {delay_str} 成功: {success_count}   ")
             sys.stdout.flush()
@@ -84,7 +85,7 @@ async def test_all_nodes(nodes):
     tasks = [test_node(i + 1, node) for i, node in enumerate(nodes)]
     await asyncio.gather(*tasks)
     print()
-    return valid_nodes
+    return results
 
 async def main():
     print("📥 读取订阅链接...")
@@ -120,21 +121,25 @@ async def main():
     print(f"🎯 去重后节点数: {len(all_nodes)}")
 
     print(f"🚦 开始节点延迟测试，共 {len(all_nodes)} 个节点")
-    tested_all = await test_all_nodes(all_nodes)
+    tested = await test_all_nodes(all_nodes)
 
-    print(f"\n✅ 测试完成: 成功 {len(tested_all)} / 总 {len(all_nodes)}")
+    print(f"\n✅ 测试完成: 成功 {len(tested)} / 总 {len(all_nodes)}")
 
-    if not tested_all:
+    if not tested:
         print("[结果] 无可用节点")
         return
 
-    combined = "\n".join(tested_all)
+    # 按延迟升序排序，保留前 MAX_OUTPUT_NODES 个
+    top_nodes = sorted(tested, key=lambda x: x[1])[:MAX_OUTPUT_NODES]
+    final_nodes = [node for node, _ in top_nodes]
+
+    combined = "\n".join(final_nodes)
     encoded = base64.b64encode(combined.encode("utf-8")).decode("utf-8")
 
     with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
         f.write(encoded)
 
-    print(f"📦 有效节点已保存: {OUTPUT_FILE}（共 {len(tested_all)} 个）")
+    print(f"📦 已保存延迟最低的前 {len(final_nodes)} 个节点到: {OUTPUT_FILE}")
 
 if __name__ == "__main__":
     asyncio.run(main())
