@@ -71,45 +71,31 @@ async def test_all_nodes(nodes):
     success_count = 0
     done_count = 0
     results = []
-    failed_nodes = []
     sem = Semaphore(32)
-    last_print_percent = 0
-
-    print(f"🚀 开始测速 {total} 个节点...")
+    printed_progress = set()
     start_time = time.time()
 
     async def test_node(node):
-        nonlocal success_count, done_count, last_print_percent
+        nonlocal success_count, done_count
         async with sem:
             res = await test_single_node(node)
             if res is not None:
                 results.append(res)
                 success_count += 1
-            else:
-                failed_nodes.append(node)
             done_count += 1
-            percent = done_count / total * 100
-            if percent - last_print_percent >= 10 or done_count == total:
-                print(f"测试进度: {percent:.0f}% | 成功: {success_count} / {done_count}")
-                last_print_percent = percent
 
-    tasks = [test_node(node) for node in nodes]
-    await asyncio.gather(*tasks)
+            percent = int((done_count / total) * 100)
+            if percent % 10 == 0 and percent not in printed_progress:
+                printed_progress.add(percent)
+                print(f"🚦 测速进度: {percent:3}% | 成功: {success_count} / {done_count}")
 
-    duration = time.time() - start_time
-    print(f"\n⏱️ 测试完成，总耗时: {duration:.1f} 秒")
-    print(f"✅ 成功节点: {success_count}")
-    print(f"❌ 失败节点: {len(failed_nodes)}")
+    print(f"🚀 开始延迟测试，共 {total} 个节点")
+    await asyncio.gather(*[test_node(node) for node in nodes])
 
-    if failed_nodes:
-        with open("failed.txt", "w", encoding="utf-8") as f:
-            for node in failed_nodes:
-                f.write(node + "\n")
-        print("📄 失败节点已保存到 failed.txt")
+    print(f"\n✅ 测试完成: 成功 {success_count} / 总 {total}，耗时 {time.time() - start_time:.1f} 秒")
 
     results.sort(key=lambda x: x[1])
-    top_nodes = [node for node, delay in results[:MAX_SAVE]]
-    return top_nodes
+    return [node for node, _ in results[:MAX_SAVE]]
 
 async def main():
     print("📥 读取订阅链接...")
@@ -142,7 +128,6 @@ async def main():
     unique_nodes = list(unique_nodes_map.values())
     print(f"🎯 去重后节点数: {len(unique_nodes)}")
 
-    print(f"🚦 开始节点延迟测试，共 {len(unique_nodes)} 个节点")
     tested_nodes = await test_all_nodes(unique_nodes)
 
     print(f"\n✅ 测试完成: 成功 {len(tested_nodes)} / 总 {len(unique_nodes)}")
