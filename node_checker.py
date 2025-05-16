@@ -4,12 +4,11 @@ import base64
 import time
 from urllib.parse import urlparse
 from asyncio import Semaphore
-from datetime import datetime
 
 MAX_DELAY = 5000
-MAX_SAVE = 1000  # 保存测速后延迟最低的前1000条节点
+MAX_SAVE = 1000
 SUB_FILE = "subs.txt"
-OUTPUT_FILE = "sub"  # 输出文件名改为 sub（无扩展名）
+OUTPUT_FILE = "sub"
 SUPPORTED_PROTOCOLS = ("vmess://", "ss://", "trojan://", "vless://", "hysteria://", "hysteria2://", "tuic://")
 
 def is_supported_node(url):
@@ -65,31 +64,30 @@ async def test_single_node(node):
     except Exception:
         return None
 
-async def test_all_nodes(nodes):
-    total = len(nodes)
-    success_count = 0
-    done_count = 0
-    results = []
+async def test_nodes_for_subscription(nodes):
     sem = Semaphore(32)
+    success_count = 0
+    fail_count = 0
+    results = []
 
     async def test_node(node):
-        nonlocal success_count, done_count
+        nonlocal success_count, fail_count
         async with sem:
             delay = await test_single_node(node)
-            if delay is not None and delay <= MAX_DELAY:
+            if delay is not None:
                 results.append((node, delay))
                 success_count += 1
-            done_count += 1
-            print(f"\r测试进度 ({done_count}/{total}) 成功: {success_count}   ", end="", flush=True)
+            else:
+                fail_count += 1
 
     tasks = [test_node(node) for node in nodes]
     await asyncio.gather(*tasks)
-    print()
 
+    # 按延迟排序，取前MAX_SAVE条节点
     results.sort(key=lambda x: x[1])
     top_nodes = [node for node, delay in results[:MAX_SAVE]]
 
-    return top_nodes
+    return top_nodes, success_count, fail_count
 
 async def main():
     print("📥 读取订阅链接...")
@@ -101,56 +99,43 @@ async def main():
         return
 
     print("🌐 抓取订阅链接中...")
-    fetch_stats = {}  # 统计每个链接成功失败节点数
     async with aiohttp.ClientSession() as session:
         tasks = [fetch_subscription(session, url) for url in urls]
-        results = await asyncio.gather(*tasks)
+        all_nodes_lists = await asyncio.gather(*tasks)
 
-    raw_nodes = []
-    for url, res in zip(urls, results):
-        success_num = len(res) if res else 0
-        fail_num = 0 if res else 1  # 简单认为抓取失败算1个失败
-        fetch_stats[url] = {"success": success_num, "fail": fail_num}
+    all_success_nodes = []
+    for url, nodes in zip(urls, all_nodes_lists):
+        if not nodes:
+            print(f"{url}: 抓取失败或无节点")
+            continue
+        print(f"{url}: 抓取节点数 {len(nodes)}，开始测速...")
 
-        if success_num:
-            print(f"[成功] 抓取链接: {url} 节点数: {success_num}")
-        else:
-            print(f"[失败] 抓取链接: {url}")
+        tested_nodes, success, fail = await test_nodes_for_subscription(nodes)
+        print(f"{url}: 测速结果 -> 成功 {success}，失败 {fail}")
 
-        raw_nodes.extend(res if res else [])
+        all_success_nodes.extend(tested_nodes)
 
-    print(f"📊 抓取完成，节点总数（含重复）: {len(raw_nodes)}")
-
+    # 去重处理
     unique_nodes_map = {}
-    for node in raw_nodes:
+    for node in all_success_nodes:
         key = extract_host_port(node)
         if key and key not in unique_nodes_map:
             unique_nodes_map[key] = node
 
-    all_nodes = list(unique_nodes_map.values())
-    print(f"🎯 去重后节点数: {len(all_nodes)}")
+    final_nodes = list(unique_nodes_map.values())
+    print(f"🎯 总计有效节点数（去重后）: {len(final_nodes)}")
 
-    print(f"🚦 开始节点延迟测试，共 {len(all_nodes)} 个节点")
-    tested_nodes = await test_all_nodes(all_nodes)
-
-    print(f"\n✅ 测试完成: 成功 {len(tested_nodes)} / 总 {len(all_nodes)}")
-
-    if not tested_nodes:
+    if not final_nodes:
         print("[结果] 无可用节点")
         return
 
-    combined = "\n".join(tested_nodes)
+    combined = "\n".join(final_nodes)
     encoded = base64.b64encode(combined.encode("utf-8")).decode("utf-8")
 
     with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
         f.write(encoded)
 
-    print(f"📦 有效节点已保存: {OUTPUT_FILE}（共 {len(tested_nodes)} 个）")
-
-    # 打印抓取统计，格式化时间和统计内容
-    for url, counts in fetch_stats.items():
-        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S,%f")[:-3]
-        print(f"{now} - {url}: 成功 {counts['success']}，失败 {counts['fail']}")
+    print(f"📦 有效节点已保存: {OUTPUT_FILE}（共 {len(final_nodes)} 个）")
 
 if __name__ == "__main__":
     asyncio.run(main())
