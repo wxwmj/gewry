@@ -51,6 +51,16 @@ async def tcp_ping(host, port, timeout=3):
     except Exception:
         return None
 
+async def check_chatgpt(host, port):
+    try:
+        timeout = aiohttp.ClientTimeout(total=5)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            url = "https://chat.openai.com/"
+            async with session.get(url) as resp:
+                return resp.status == 200
+    except Exception:
+        return False
+
 async def test_single_node(node):
     try:
         parsed = urlparse(node)
@@ -61,11 +71,7 @@ async def test_single_node(node):
         if delay is None or delay > MAX_DELAY:
             return None
 
-        # 简单Netflix检测示范
-        if not await check_netflix(host, port):
-            return None
-
-        # 简单ChatGPT检测示范
+        # 只做ChatGPT连通检测
         if not await check_chatgpt(host, port):
             return None
 
@@ -103,32 +109,9 @@ async def test_all_nodes(nodes):
 
     tasks = [test_node(node) for node in nodes]
     await asyncio.gather(*tasks)
-    print()  # 换行避免进度卡在一行
-
+    print()
     results.sort(key=lambda x: x[1])
     return [node for node, delay in results[:MAX_SAVE]]
-
-async def check_netflix(host, port):
-    # 简易版示范，实际代理测试更复杂
-    try:
-        timeout = aiohttp.ClientTimeout(total=5)
-        async with aiohttp.ClientSession(timeout=timeout) as session:
-            url = "https://www.netflix.com/title/81215567"
-            async with session.get(url) as resp:
-                return resp.status == 200
-    except Exception:
-        return False
-
-async def check_chatgpt(host, port):
-    # 简易版示范，实际代理测试更复杂
-    try:
-        timeout = aiohttp.ClientTimeout(total=5)
-        async with aiohttp.ClientSession(timeout=timeout) as session:
-            url = "https://chat.openai.com/"
-            async with session.get(url) as resp:
-                return resp.status == 200
-    except Exception:
-        return False
 
 async def main():
     print("📥 读取订阅链接...")
@@ -155,12 +138,9 @@ async def main():
 
     print(f"📊 抓取完成，节点总数（含重复）: {len(all_nodes)}")
 
-    # 修改subs.txt，给抓取失败的链接前加#注释
     if failed_urls:
         print(f"⚠️ 以下订阅链接抓取失败，将自动注释：")
         print("\n".join(failed_urls))
-
-        # 重写subs.txt，注释掉失败行
         new_lines = []
         for line in lines:
             line_strip = line.strip()
@@ -171,7 +151,6 @@ async def main():
         with open(SUB_FILE, "w", encoding="utf-8") as f:
             f.writelines(new_lines)
 
-    # 去重逻辑优化，key = host:port
     unique_nodes_map = {}
     for node in all_nodes:
         key = extract_host_port(node)
@@ -181,7 +160,7 @@ async def main():
     unique_nodes = list(unique_nodes_map.values())
     print(f"🎯 去重后节点数: {len(unique_nodes)}")
 
-    print(f"🚦 开始节点延迟及解锁测试，共 {len(unique_nodes)} 个节点")
+    print(f"🚦 开始节点延迟及ChatGPT连通测试，共 {len(unique_nodes)} 个节点")
     tested_nodes = await test_all_nodes(unique_nodes)
 
     print(f"\n✅ 测试完成: 成功 {len(tested_nodes)} / 总 {len(unique_nodes)}")
