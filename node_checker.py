@@ -23,12 +23,11 @@ def base64_decode_links(data):
 
 async def fetch_subscription(session, url):
     try:
-        async with session.get(url, timeout=3) as resp:  # 连接超时3秒
+        async with session.get(url, timeout=3) as resp:
             raw = await resp.text()
-            return base64_decode_links(raw)
+            return base64_decode_links(raw), None
     except Exception:
-        print(f"[失败] 抓取订阅失败，请确认链接是否有效，并建议注释该链接：{url}")
-        return []
+        return [], url  # 返回失败的url用于注释
 
 def extract_host_port(node_url):
     try:
@@ -61,15 +60,25 @@ async def test_single_node(node):
         delay = await tcp_ping(host, port, timeout=3)
         if delay is None or delay > MAX_DELAY:
             return None
+
+        # 简单Netflix检测示范
+        if not await check_netflix(host, port):
+            return None
+
+        # 简单ChatGPT检测示范
+        if not await check_chatgpt(host, port):
+            return None
+
         return node, delay
     except Exception:
         return None
 
 def print_progress(percent, success_count):
-    line = f"测试节点进度: {percent:6.2f}% | 成功: {success_count}"
-    max_len = 50
-    padded_line = line + " " * (max_len - len(line))
-    print("\r" + padded_line, end="", flush=True)
+    bar_len = 40
+    filled_len = int(bar_len * percent // 100)
+    bar = '=' * filled_len + '-' * (bar_len - filled_len)
+    line = f"\r测试节点进度: |{bar}| {percent:6.2f}% 成功: {success_count}"
+    print(line, end="", flush=True)
 
 async def test_all_nodes(nodes):
     total = len(nodes)
@@ -88,7 +97,7 @@ async def test_all_nodes(nodes):
                 success_count += 1
             done_count += 1
             percent = done_count / total * 100
-            if percent - last_print_percent >= 5 or percent == 100:
+            if percent - last_print_percent >= 1 or percent == 100:
                 print_progress(percent, success_count)
                 last_print_percent = percent
 
@@ -99,28 +108,68 @@ async def test_all_nodes(nodes):
     results.sort(key=lambda x: x[1])
     return [node for node, delay in results[:MAX_SAVE]]
 
+async def check_netflix(host, port):
+    # 简易版示范，实际代理测试更复杂
+    try:
+        timeout = aiohttp.ClientTimeout(total=5)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            url = "https://www.netflix.com/title/81215567"
+            async with session.get(url) as resp:
+                return resp.status == 200
+    except Exception:
+        return False
+
+async def check_chatgpt(host, port):
+    # 简易版示范，实际代理测试更复杂
+    try:
+        timeout = aiohttp.ClientTimeout(total=5)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            url = "https://chat.openai.com/"
+            async with session.get(url) as resp:
+                return resp.status == 200
+    except Exception:
+        return False
+
 async def main():
     print("📥 读取订阅链接...")
     try:
         with open(SUB_FILE, "r", encoding="utf-8") as f:
-            urls = [line.strip() for line in f if line.strip()]
+            lines = f.readlines()
     except FileNotFoundError:
         print(f"[错误] 未找到文件 {SUB_FILE}")
         return
 
+    urls = [line.strip() for line in lines if line.strip() and not line.strip().startswith("#")]
+
     print("🌐 抓取订阅内容中...")
     async with aiohttp.ClientSession() as session:
         all_nodes = []
-        for url in urls:
-            nodes = await fetch_subscription(session, url)
+        failed_urls = []
+        for i, url in enumerate(urls):
+            nodes, fail_url = await fetch_subscription(session, url)
             if nodes:
                 print(f"[成功] 抓取订阅：{url}，节点数: {len(nodes)}")
                 all_nodes.extend(nodes)
-            else:
-                # 已在 fetch_subscription 里打印失败并提醒注释
-                pass
+            if fail_url is not None:
+                failed_urls.append(fail_url)
 
     print(f"📊 抓取完成，节点总数（含重复）: {len(all_nodes)}")
+
+    # 修改subs.txt，给抓取失败的链接前加#注释
+    if failed_urls:
+        print(f"⚠️ 以下订阅链接抓取失败，将自动注释：")
+        print("\n".join(failed_urls))
+
+        # 重写subs.txt，注释掉失败行
+        new_lines = []
+        for line in lines:
+            line_strip = line.strip()
+            if line_strip in failed_urls and not line_strip.startswith("#"):
+                new_lines.append("# " + line)
+            else:
+                new_lines.append(line)
+        with open(SUB_FILE, "w", encoding="utf-8") as f:
+            f.writelines(new_lines)
 
     # 去重逻辑优化，key = host:port
     unique_nodes_map = {}
@@ -132,7 +181,7 @@ async def main():
     unique_nodes = list(unique_nodes_map.values())
     print(f"🎯 去重后节点数: {len(unique_nodes)}")
 
-    print(f"🚦 开始节点延迟测试，共 {len(unique_nodes)} 个节点")
+    print(f"🚦 开始节点延迟及解锁测试，共 {len(unique_nodes)} 个节点")
     tested_nodes = await test_all_nodes(unique_nodes)
 
     print(f"\n✅ 测试完成: 成功 {len(tested_nodes)} / 总 {len(unique_nodes)}")
