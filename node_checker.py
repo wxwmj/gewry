@@ -4,7 +4,7 @@ import base64
 import time
 from urllib.parse import urlparse
 from asyncio import Semaphore
-import sys
+from datetime import datetime
 
 MAX_DELAY = 5000
 MAX_SAVE = 1000  # 保存测速后延迟最低的前1000条节点
@@ -80,14 +80,12 @@ async def test_all_nodes(nodes):
                 results.append((node, delay))
                 success_count += 1
             done_count += 1
-            # 一行动态刷新测试进度，避免多行打印
             print(f"\r测试进度 ({done_count}/{total}) 成功: {success_count}   ", end="", flush=True)
 
     tasks = [test_node(node) for node in nodes]
     await asyncio.gather(*tasks)
-    print()  # 最后换行，防止被后续打印覆盖
+    print()
 
-    # 按延迟排序，取前MAX_SAVE条节点
     results.sort(key=lambda x: x[1])
     top_nodes = [node for node, delay in results[:MAX_SAVE]]
 
@@ -103,17 +101,23 @@ async def main():
         return
 
     print("🌐 抓取订阅链接中...")
+    fetch_stats = {}  # 统计每个链接成功失败节点数
     async with aiohttp.ClientSession() as session:
         tasks = [fetch_subscription(session, url) for url in urls]
         results = await asyncio.gather(*tasks)
 
     raw_nodes = []
     for url, res in zip(urls, results):
-        if res:
-            print(f"[成功] 抓取链接: {url} 节点数: {len(res)}")
+        success_num = len(res) if res else 0
+        fail_num = 0 if res else 1  # 简单认为抓取失败算1个失败
+        fetch_stats[url] = {"success": success_num, "fail": fail_num}
+
+        if success_num:
+            print(f"[成功] 抓取链接: {url} 节点数: {success_num}")
         else:
             print(f"[失败] 抓取链接: {url}")
-        raw_nodes.extend(res)
+
+        raw_nodes.extend(res if res else [])
 
     print(f"📊 抓取完成，节点总数（含重复）: {len(raw_nodes)}")
 
@@ -142,6 +146,11 @@ async def main():
         f.write(encoded)
 
     print(f"📦 有效节点已保存: {OUTPUT_FILE}（共 {len(tested_nodes)} 个）")
+
+    # 打印抓取统计，格式化时间和统计内容
+    for url, counts in fetch_stats.items():
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S,%f")[:-3]
+        print(f"{now} - {url}: 成功 {counts['success']}，失败 {counts['fail']}")
 
 if __name__ == "__main__":
     asyncio.run(main())
