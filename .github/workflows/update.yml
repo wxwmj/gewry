@@ -2,8 +2,8 @@ name: Auto Update Sub
 
 on:
   schedule:
-    - cron: '0 22-10 * * *'  # 每天北京时间 06:00 ~ 18:00 每小时执行一次
-  workflow_dispatch:         # 支持手动触发
+    - cron: '0 * * * *'   # 每小时 UTC 整点执行
+  workflow_dispatch:
 
 jobs:
   update-sub:
@@ -13,7 +13,7 @@ jobs:
       - name: 📥 Checkout repository
         uses: actions/checkout@v4
         with:
-          persist-credentials: false  # 禁止自动使用默认 token（改用 PAT）
+          persist-credentials: false
 
       - name: 🔧 Set up Python
         uses: actions/setup-python@v5
