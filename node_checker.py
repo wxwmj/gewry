@@ -4,6 +4,7 @@ import base64
 import time
 from urllib.parse import urlparse
 from asyncio import Semaphore
+import aiohttp_socks  # pip install aiohttp_socks
 
 MAX_DELAY = 5000  # 最大延迟 ms
 MAX_SAVE = 1000   # 最大保存节点数
@@ -11,8 +12,14 @@ SUB_FILE = "subs.txt"  # 订阅链接文件名
 OUTPUT_FILE = "sub"    # 输出文件名
 SUPPORTED_PROTOCOLS = ("vmess://", "ss://", "trojan://", "vless://", "hysteria://", "hysteria2://", "tuic://")
 
+# 本地socks5代理地址，假设是xray/v2ray等程序启动的节点代理
+LOCAL_SOCKS5_HOST = "127.0.0.1"
+LOCAL_SOCKS5_PORT = 1080
+
+
 def is_supported_node(url):
     return url.startswith(SUPPORTED_PROTOCOLS)
+
 
 def base64_decode_links(data):
     try:
@@ -21,13 +28,16 @@ def base64_decode_links(data):
     except Exception:
         return [line.strip() for line in data.strip().splitlines() if is_supported_node(line)]
 
+
 async def fetch_subscription(session, url):
     try:
-        async with session.get(url, timeout=3) as resp:
+        async with session.get(url, timeout=3) as resp:  # 连接超时3秒
             raw = await resp.text()
-            return base64_decode_links(raw), None
+            return base64_decode_links(raw)
     except Exception:
-        return [], url  # 返回失败的url用于注释
+        print(f"[失败] 抓取订阅失败，请确认链接是否有效，并建议注释该链接：{url}")
+        return []
+
 
 def extract_host_port(node_url):
     try:
@@ -40,6 +50,7 @@ def extract_host_port(node_url):
         return None
     return None
 
+
 async def tcp_ping(host, port, timeout=3):
     try:
         start = time.perf_counter()
@@ -51,15 +62,18 @@ async def tcp_ping(host, port, timeout=3):
     except Exception:
         return None
 
-async def check_chatgpt(host, port):
+
+async def check_chatgpt_via_socks5(proxy_host=LOCAL_SOCKS5_HOST, proxy_port=LOCAL_SOCKS5_PORT):
+    proxy_url = f"socks5://{proxy_host}:{proxy_port}"
     try:
         timeout = aiohttp.ClientTimeout(total=5)
-        async with aiohttp.ClientSession(timeout=timeout) as session:
-            url = "https://chat.openai.com/"
-            async with session.get(url) as resp:
+        connector = aiohttp_socks.ProxyConnector.from_url(proxy_url, rdns=True)
+        async with aiohttp.ClientSession(connector=connector, timeout=timeout) as session:
+            async with session.get("https://chat.openai.com/") as resp:
                 return resp.status == 200
     except Exception:
         return False
+
 
 async def test_single_node(node):
     try:
@@ -71,20 +85,22 @@ async def test_single_node(node):
         if delay is None or delay > MAX_DELAY:
             return None
 
-        # 只做ChatGPT连通检测
-        if not await check_chatgpt(host, port):
+        # 这里假设每个节点对应的本地代理都运行在 LOCAL_SOCKS5_HOST:LOCAL_SOCKS5_PORT，
+        # 如果你每个节点代理不同端口，这里需要改成动态端口
+        is_chatgpt_ok = await check_chatgpt_via_socks5()
+        if not is_chatgpt_ok:
             return None
-
         return node, delay
     except Exception:
         return None
 
+
 def print_progress(percent, success_count):
-    bar_len = 40
-    filled_len = int(bar_len * percent // 100)
-    bar = '=' * filled_len + '-' * (bar_len - filled_len)
-    line = f"\r测试节点进度: |{bar}| {percent:6.2f}% 成功: {success_count}"
-    print(line, end="", flush=True)
+    line = f"测试节点进度: {percent:6.2f}% | 成功: {success_count}"
+    max_len = 50
+    padded_line = line + " " * (max_len - len(line))
+    print("\r" + padded_line, end="", flush=True)
+
 
 async def test_all_nodes(nodes):
     total = len(nodes)
@@ -103,54 +119,55 @@ async def test_all_nodes(nodes):
                 success_count += 1
             done_count += 1
             percent = done_count / total * 100
-            if percent - last_print_percent >= 1 or percent == 100:
+            if percent - last_print_percent >= 5 or percent == 100:
                 print_progress(percent, success_count)
                 last_print_percent = percent
 
     tasks = [test_node(node) for node in nodes]
     await asyncio.gather(*tasks)
-    print()
+    print()  # 换行避免进度卡在一行
+
     results.sort(key=lambda x: x[1])
     return [node for node, delay in results[:MAX_SAVE]]
+
 
 async def main():
     print("📥 读取订阅链接...")
     try:
         with open(SUB_FILE, "r", encoding="utf-8") as f:
-            lines = f.readlines()
+            urls = [line.strip() for line in f if line.strip()]
     except FileNotFoundError:
         print(f"[错误] 未找到文件 {SUB_FILE}")
         return
-
-    urls = [line.strip() for line in lines if line.strip() and not line.strip().startswith("#")]
 
     print("🌐 抓取订阅内容中...")
     async with aiohttp.ClientSession() as session:
         all_nodes = []
         failed_urls = []
-        for i, url in enumerate(urls):
-            nodes, fail_url = await fetch_subscription(session, url)
+        for url in urls:
+            nodes = await fetch_subscription(session, url)
             if nodes:
                 print(f"[成功] 抓取订阅：{url}，节点数: {len(nodes)}")
                 all_nodes.extend(nodes)
-            if fail_url is not None:
-                failed_urls.append(fail_url)
+            else:
+                print(f"[失败] 抓取订阅失败，标记为注释: {url}")
+                failed_urls.append(url)
+
+    # 自动注释失败的订阅链接
+    if failed_urls:
+        with open(SUB_FILE, "r", encoding="utf-8") as f:
+            lines = f.readlines()
+        with open(SUB_FILE, "w", encoding="utf-8") as f:
+            for line in lines:
+                line_strip = line.strip()
+                if line_strip in failed_urls and not line_strip.startswith("#"):
+                    f.write("# " + line)
+                else:
+                    f.write(line)
 
     print(f"📊 抓取完成，节点总数（含重复）: {len(all_nodes)}")
 
-    if failed_urls:
-        print(f"⚠️ 以下订阅链接抓取失败，将自动注释：")
-        print("\n".join(failed_urls))
-        new_lines = []
-        for line in lines:
-            line_strip = line.strip()
-            if line_strip in failed_urls and not line_strip.startswith("#"):
-                new_lines.append("# " + line)
-            else:
-                new_lines.append(line)
-        with open(SUB_FILE, "w", encoding="utf-8") as f:
-            f.writelines(new_lines)
-
+    # 去重逻辑优化，key = host:port
     unique_nodes_map = {}
     for node in all_nodes:
         key = extract_host_port(node)
@@ -176,6 +193,7 @@ async def main():
         f.write(encoded)
 
     print(f"📦 有效节点已保存: {OUTPUT_FILE}（共 {len(tested_nodes)} 个）")
+
 
 if __name__ == "__main__":
     asyncio.run(main())
