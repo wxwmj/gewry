@@ -4,7 +4,6 @@ import base64
 import time
 from urllib.parse import urlparse
 from asyncio import Semaphore
-import sys
 
 MAX_DELAY = 5000
 MAX_SAVE = 1000
@@ -34,7 +33,6 @@ def extract_host_port(node_url):
     try:
         parsed = urlparse(node_url)
         if parsed.hostname and parsed.port:
-            # 端口必须是整数且合理范围内
             port = int(parsed.port)
             if 0 < port < 65536:
                 return f"{parsed.hostname}:{port}"
@@ -80,18 +78,18 @@ async def test_all_nodes(nodes):
         nonlocal success_count, done_count
         async with sem:
             res = await test_single_node(node)
+            done_count += 1
             if res is not None:
                 results.append(res)
                 success_count += 1
-            done_count += 1
             percent = done_count / total * 100
-            print(f"\r测试节点进度: {percent:6.2f}% | 成功: {success_count} / {done_count} / {total}", end="", flush=True)
+            # 一行进度，格式：测试节点进度:   0.00% | 成功: 1
+            print(f"\r测试节点进度: {percent:6.2f}% | 成功: {success_count}", end="", flush=True)
 
     tasks = [test_node(node) for node in nodes]
     await asyncio.gather(*tasks)
     print()  # 换行
 
-    # 按延迟排序，取前MAX_SAVE条
     results.sort(key=lambda x: x[1])
     top_nodes = [node for node, delay in results[:MAX_SAVE]]
 
