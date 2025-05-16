@@ -1,3 +1,4 @@
 aiohttp
 python-dotenv
 tqdm>=4.62
+aiohttp_socks
