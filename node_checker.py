@@ -21,16 +21,16 @@ def base64_decode_links(data):
         decoded = base64.b64decode(data).decode("utf-8")
         return [line.strip() for line in decoded.strip().splitlines() if is_supported_node(line)]
     except Exception:
+        # 不是base64编码则直接按行过滤
         return [line.strip() for line in data.strip().splitlines() if is_supported_node(line)]
 
 async def fetch_subscription(session, url):
     try:
-        async with session.get(url, timeout=5) as resp:  # 抓取超时5秒
+        async with session.get(url, timeout=5) as resp:  # 连接超时5秒
             raw = await resp.text()
             return base64_decode_links(raw)
-    except Exception as e:
-        print(f"[失败] 抓取订阅失败，请确认链接是否有效，并建议注释该链接：{url}")
-        print(f"     具体错误: {e}")
+    except Exception:
+        print(f"\n[失败] 抓取订阅失败，请确认链接是否有效，并建议注释该链接：{url}")
         return []
 
 def extract_host_port(node_url):
@@ -41,75 +41,61 @@ def extract_host_port(node_url):
             if 0 < port < 65536:
                 return f"{parsed.hostname}:{port}"
     except Exception:
-        return None
+        pass
     return None
 
-async def tcp_ping(host, port, timeout=5):  # 超时改为5秒
+async def tcp_ping(host, port, timeout=3):
     try:
         start = time.perf_counter()
         reader, writer = await asyncio.wait_for(asyncio.open_connection(host, port), timeout)
         end = time.perf_counter()
         writer.close()
         await writer.wait_closed()
-        delay = int((end - start) * 1000)
-        print(f"测速成功: {host}:{port} 延迟 {delay}ms")
-        return delay
-    except Exception as e:
-        print(f"测速失败: {host}:{port} 错误: {e}")
+        return int((end - start) * 1000)
+    except Exception:
         return None
 
-async def check_chatgpt_connectivity():
+async def check_chatgpt_connectivity(session):
     if not OPENAI_API_KEY:
-        print("[错误] 环境变量 OPENAI_API_KEY 未设置，无法检测 ChatGPT 连通性")
         return False
     url = "https://api.openai.com/v1/chat/completions"
     headers = {
         "Authorization": f"Bearer {OPENAI_API_KEY}",
-        "Content-Type": "application/json",
+        "Content-Type": "application/json"
     }
     json_data = {
         "model": "gpt-3.5-turbo",
-        "messages": [{"role": "user", "content": "Hello"}],
+        "messages": [{"role": "user", "content": "ping"}],
         "max_tokens": 1,
     }
     try:
-        async with aiohttp.ClientSession() as session:
-            async with session.post(url, headers=headers, json=json_data, timeout=10) as resp:
-                if resp.status == 200:
-                    print("ChatGPT 连通测试成功")
-                    return True
-                else:
-                    print(f"[错误] ChatGPT 连通测试失败，状态码: {resp.status}")
-                    return False
-    except Exception as e:
-        print(f"[错误] ChatGPT 连通测试异常: {e}")
-        return False
+        async with session.post(url, headers=headers, json=json_data, timeout=10) as resp:
+            if resp.status == 200:
+                return True
+    except Exception:
+        pass
+    return False
 
-async def test_single_node(node):
+async def test_single_node(node, session):
     try:
         parsed = urlparse(node)
         host, port = parsed.hostname, parsed.port
         if not host or not port:
-            print(f"节点格式错误，无法解析 host 或 port: {node}")
             return None
-        delay = await tcp_ping(host, port, timeout=5)
+        delay = await tcp_ping(host, port, timeout=3)
         if delay is None or delay > MAX_DELAY:
             return None
-        # ChatGPT检测
-        chatgpt_ok = await check_chatgpt_connectivity()
-        if not chatgpt_ok:
-            print(f"节点 {node} 延迟合格，但 ChatGPT 连通检测未通过")
+        # 测试ChatGPT连通性
+        connected = await check_chatgpt_connectivity(session)
+        if not connected:
             return None
         return node, delay
-    except Exception as e:
-        print(f"节点测试异常: {e}")
+    except Exception:
         return None
 
 def print_progress(percent, success_count):
     line = f"测试节点进度: {percent:6.2f}% | 成功: {success_count}"
-    max_len = 50
-    padded_line = line + " " * (max_len - len(line))
-    print("\r" + padded_line, end="", flush=True)
+    print(f"\r{line}  ", end="", flush=True)
 
 async def test_all_nodes(nodes):
     total = len(nodes)
@@ -119,23 +105,24 @@ async def test_all_nodes(nodes):
     sem = asyncio.Semaphore(32)
     last_print_percent = 0
 
-    async def test_node(node):
-        nonlocal success_count, done_count, last_print_percent
-        async with sem:
-            res = await test_single_node(node)
-            if res is not None:
-                results.append(res)
-                success_count += 1
-            done_count += 1
-            percent = done_count / total * 100
-            if percent - last_print_percent >= 5 or percent == 100:
-                print_progress(percent, success_count)
-                last_print_percent = percent
+    async with aiohttp.ClientSession() as session:
+        async def test_node(node):
+            nonlocal success_count, done_count, last_print_percent
+            async with sem:
+                res = await test_single_node(node, session)
+                if res is not None:
+                    results.append(res)
+                    success_count += 1
+                done_count += 1
+                percent = done_count / total * 100
+                if percent - last_print_percent >= 1 or percent == 100:
+                    print_progress(percent, success_count)
+                    last_print_percent = percent
 
-    tasks = [test_node(node) for node in nodes]
-    await asyncio.gather(*tasks)
-    print()  # 换行避免进度卡住一行
+        tasks = [test_node(node) for node in nodes]
+        await asyncio.gather(*tasks)
 
+    print()  # 测试结束换行
     results.sort(key=lambda x: x[1])
     return [node for node, delay in results[:MAX_SAVE]]
 
@@ -143,7 +130,7 @@ async def main():
     print("📥 读取订阅链接...")
     try:
         with open(SUB_FILE, "r", encoding="utf-8") as f:
-            urls = [line.strip() for line in f if line.strip() and not line.strip().startswith("#")]
+            urls = [line.strip() for line in f if line.strip()]
     except FileNotFoundError:
         print(f"[错误] 未找到文件 {SUB_FILE}")
         return
@@ -160,24 +147,23 @@ async def main():
             else:
                 failed_urls.append(url)
 
-    # 失败订阅自动注释写回文件
+    # 自动注释抓取失败的订阅链接
     if failed_urls:
-        print(f"✍️ 标记失败订阅链接为注释...")
-        try:
-            with open(SUB_FILE, "r", encoding="utf-8") as f:
-                lines = f.readlines()
-            with open(SUB_FILE, "w", encoding="utf-8") as f:
-                for line in lines:
-                    if any(url in line for url in failed_urls) and not line.startswith("#"):
-                        f.write("# " + line)
-                    else:
-                        f.write(line)
-        except Exception as e:
-            print(f"[错误] 失败订阅注释写回失败: {e}")
+        print(f"\n📌 以下订阅抓取失败，将自动添加注释：")
+        with open(SUB_FILE, "r", encoding="utf-8") as f:
+            lines = f.readlines()
 
-    print(f"📊 抓取完成，节点总数（含重复）: {len(all_nodes)}")
+        with open(SUB_FILE, "w", encoding="utf-8") as f:
+            for line in lines:
+                stripped = line.strip()
+                if stripped in failed_urls and not stripped.startswith("#"):
+                    f.write(f"# {line}")
+                    print(f"已注释: {stripped}")
+                else:
+                    f.write(line)
 
-    # 去重逻辑优化，key = host:port
+    print(f"\n📊 抓取完成，节点总数（含重复）: {len(all_nodes)}")
+
     unique_nodes_map = {}
     for node in all_nodes:
         key = extract_host_port(node)
