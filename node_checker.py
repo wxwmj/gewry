@@ -49,10 +49,8 @@ async def tcp_ping(host, port, timeout=5):
         end = time.perf_counter()
         writer.close()
         await writer.wait_closed()
-        delay_ms = int((end - start) * 1000)
-        return delay_ms
+        return int((end - start) * 1000)
     except Exception:
-        # 不打印失败详情，直接返回 None
         return None
 
 async def test_single_node(node):
@@ -68,35 +66,45 @@ async def test_single_node(node):
     except Exception:
         return None
 
+line_template = "测试节点进度: {percent:6.2f}% | 成功: {success_count}"
+max_len = 50  # 估计最大行长度
+
+def print_progress(percent, success_count):
+    line = line_template.format(percent=percent, success_count=success_count)
+    padded_line = line + " " * (max_len - len(line))
+    print("\r" + padded_line, end="", flush=True)
+
 async def test_all_nodes(nodes):
     total = len(nodes)
     success_count = 0
     done_count = 0
     results = []
     sem = Semaphore(32)
-
-    progress_thresholds = set(range(10, 101, 10))  # 10%, 20%, ..., 100%
-    last_printed_percent = 0
+    
+    last_print_percent = 0  # 记录上一次打印的百分比
 
     async def test_node(node):
-        nonlocal success_count, done_count, last_printed_percent
+        nonlocal success_count, done_count, last_print_percent
         async with sem:
             res = await test_single_node(node)
-            done_count += 1
             if res is not None:
                 results.append(res)
                 success_count += 1
-
-            percent = int(done_count / total * 100)
-            if percent in progress_thresholds and percent != last_printed_percent:
-                print(f"测试进度: {percent}% | 成功节点数: {success_count}")
-                last_printed_percent = percent
+            done_count += 1
+            percent = done_count / total * 100
+            
+            # 只在进度超过 last_print_percent + 5 时打印
+            if percent - last_print_percent >= 5 or percent == 100:
+                print_progress(percent, success_count)
+                last_print_percent = percent
 
     tasks = [test_node(node) for node in nodes]
     await asyncio.gather(*tasks)
+    print()  # 换行，避免进度条卡住一行
 
     results.sort(key=lambda x: x[1])
     top_nodes = [node for node, delay in results[:MAX_SAVE]]
+
     return top_nodes
 
 async def main():
