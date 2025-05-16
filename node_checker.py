@@ -10,6 +10,7 @@ MAX_SAVE = 1000
 SUB_FILE = "subs.txt"
 OUTPUT_FILE = "sub"
 SUPPORTED_PROTOCOLS = ("vmess://", "ss://", "trojan://", "vless://", "hysteria://", "hysteria2://", "tuic://")
+BATCH_SIZE = 1000  # 每批测速节点数
 
 def is_supported_node(url):
     return url.startswith(SUPPORTED_PROTOCOLS)
@@ -22,14 +23,11 @@ def base64_decode_links(data):
         return [line.strip() for line in data.strip().splitlines() if is_supported_node(line)]
 
 async def fetch_subscription(session, url):
-    print(f"[抓取] 开始抓取订阅链接: {url}")
     try:
         async with session.get(url, timeout=10) as resp:
             raw = await resp.text()
-            print(f"[抓取] 抓取完成: {url}，内容长度 {len(raw)}")
             return base64_decode_links(raw)
-    except Exception as e:
-        print(f"[抓取] 抓取失败: {url}，错误: {e}")
+    except Exception:
         return []
 
 def extract_host_port(node_url):
@@ -53,7 +51,7 @@ async def tcp_ping(host, port, timeout=5):
         writer.close()
         await writer.wait_closed()
         delay_ms = int((end - start) * 1000)
-        print(f"[测速] 成功连接 {host}:{port} 延迟 {delay_ms} ms")
+        # 不打印成功日志，减少刷屏
         return delay_ms
     except Exception as e:
         print(f"[测速] 连接失败 {host}:{port} 错误: {e}")
@@ -72,53 +70,53 @@ async def test_single_node(node):
     except Exception:
         return None
 
-line_template = "测试节点进度: {percent:6.2f}% | 成功: {success_count} | 失败: {fail_count}"
-max_len = 60  # 估计最大行长度
-
-def print_progress(percent, success_count, fail_count):
-    line = line_template.format(percent=percent, success_count=success_count, fail_count=fail_count)
-    padded_line = line + " " * (max_len - len(line))
-    print("\r" + padded_line, end="", flush=True)
+def print_progress(percent, success_count):
+    print(f"测试进度: {percent:.0f}% | 成功节点数: {success_count}")
 
 async def test_all_nodes(nodes):
     total = len(nodes)
     success_count = 0
-    fail_count = 0
     done_count = 0
     results = []
     sem = Semaphore(32)
 
-    progress_checkpoint = 0.1  # 每10%打印一次
-    next_progress = progress_checkpoint
+    next_print_percent = 10
 
     async def test_node(node):
-        nonlocal success_count, done_count, fail_count, next_progress
+        nonlocal success_count, done_count, next_print_percent
         async with sem:
             res = await test_single_node(node)
             done_count += 1
             if res is not None:
                 results.append(res)
                 success_count += 1
-            else:
-                fail_count += 1
+            percent = done_count / total * 100
+            if percent >= next_print_percent:
+                print_progress(next_print_percent, success_count)
+                next_print_percent += 10
 
-            percent = done_count / total
-            # 只在达到或超过每10%时打印
-            if percent >= next_progress or done_count == total:
-                print_progress(percent * 100, success_count, fail_count)
-                while next_progress <= percent:
-                    next_progress += progress_checkpoint
-
-    print("[测速] 开始测速...")
     tasks = [test_node(node) for node in nodes]
     await asyncio.gather(*tasks)
-    print()  # 换行，避免进度条卡在同一行
+    # 最后确保100%进度打印
+    if next_print_percent <= 100:
+        print_progress(100, success_count)
 
     results.sort(key=lambda x: x[1])
     top_nodes = [node for node, delay in results[:MAX_SAVE]]
 
-    print(f"[测速] 总任务数: {total}, 成功: {success_count}, 失败: {fail_count}")
     return top_nodes
+
+async def batch_test_nodes(all_nodes):
+    total = len(all_nodes)
+    print(f"节点总数: {total}，分批测速，每批 {BATCH_SIZE} 个节点")
+    all_results = []
+    for i in range(0, total, BATCH_SIZE):
+        batch_nodes = all_nodes[i:i+BATCH_SIZE]
+        print(f"\n▶️ 开始测速批次 {i//BATCH_SIZE + 1}，节点数: {len(batch_nodes)}")
+        batch_results = await test_all_nodes(batch_nodes)
+        all_results.extend(batch_results)
+        print(f"✅ 批次 {i//BATCH_SIZE + 1} 测速完成，有效节点数: {len(batch_results)}")
+    return all_results
 
 async def main():
     print("📥 读取订阅链接...")
@@ -129,11 +127,7 @@ async def main():
         print(f"[错误] 未找到文件 {SUB_FILE}")
         return
 
-    if not urls:
-        print(f"[错误] 订阅链接文件 {SUB_FILE} 是空的")
-        return
-
-    print(f"🌐 抓取订阅内容中... 共 {len(urls)} 条链接")
+    print("🌐 抓取订阅内容中...")
     async with aiohttp.ClientSession() as session:
         all_nodes = []
         for url in urls:
@@ -155,17 +149,16 @@ async def main():
     unique_nodes = list(unique_nodes_map.values())
     print(f"🎯 去重后节点数: {len(unique_nodes)}")
 
-    if not unique_nodes:
-        print("[结果] 无可用节点，退出")
-        return
+    print(f"🚦 开始节点分批延迟测试...")
+    tested_nodes = await batch_test_nodes(unique_nodes)
 
-    tested_nodes = await test_all_nodes(unique_nodes)
-
-    print(f"\n✅ 测试完成: 成功 {len(tested_nodes)} / 总 {len(unique_nodes)}")
+    print(f"\n✅ 所有批次测速完成: 成功 {len(tested_nodes)} / 总 {len(unique_nodes)}")
 
     if not tested_nodes:
         print("[结果] 无可用节点")
         return
+
+    tested_nodes = tested_nodes[:MAX_SAVE]
 
     combined = "\n".join(tested_nodes)
     encoded = base64.b64encode(combined.encode("utf-8")).decode("utf-8")
