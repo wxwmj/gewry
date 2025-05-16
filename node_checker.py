@@ -7,9 +7,9 @@ from asyncio import Semaphore
 import sys
 
 MAX_DELAY = 5000
-MAX_OUTPUT_NODES = 1000
+MAX_SAVE = 1000
 SUB_FILE = "subs.txt"
-OUTPUT_FILE = "sub"
+OUTPUT_FILE = "sub"  # 输出文件名改为 sub（无扩展名）
 SUPPORTED_PROTOCOLS = ("vmess://", "ss://", "trojan://", "vless://", "hysteria://", "hysteria2://", "tuic://")
 
 def is_supported_node(url):
@@ -68,24 +68,30 @@ async def test_single_node(node):
 async def test_all_nodes(nodes):
     total = len(nodes)
     success_count = 0
+    done_count = 0
     results = []
     sem = Semaphore(32)
 
-    async def test_node(idx, node):
-        nonlocal success_count
+    async def test_node(node):
+        nonlocal success_count, done_count
         async with sem:
             delay = await test_single_node(node)
-            if delay is not None:
+            if delay is not None and delay <= MAX_DELAY:
                 results.append((node, delay))
                 success_count += 1
-            delay_str = f"{delay}ms" if delay else "timeout"
-            sys.stdout.write(f"\r测试进度 ({idx}/{total}) 延迟: {delay_str} 成功: {success_count}   ")
+            done_count += 1
+            sys.stdout.write(f"\r测试进度 ({done_count}/{total}) 成功: {success_count}   ")
             sys.stdout.flush()
 
-    tasks = [test_node(i + 1, node) for i, node in enumerate(nodes)]
+    tasks = [test_node(node) for node in nodes]
     await asyncio.gather(*tasks)
     print()
-    return results
+
+    # 按延迟排序，取前MAX_SAVE条
+    results.sort(key=lambda x: x[1])
+    top_nodes = [node for node, delay in results[:MAX_SAVE]]
+
+    return top_nodes
 
 async def main():
     print("📥 读取订阅链接...")
@@ -98,48 +104,42 @@ async def main():
 
     print("🌐 抓取订阅内容中...")
     async with aiohttp.ClientSession() as session:
-        tasks = [fetch_subscription(session, url) for url in urls]
-        results = await asyncio.gather(*tasks)
+        all_nodes = []
+        for url in urls:
+            nodes = await fetch_subscription(session, url)
+            if nodes:
+                print(f"[成功] 抓取订阅：{url}，节点数: {len(nodes)}")
+                all_nodes.extend(nodes)
+            else:
+                print(f"[失败] 抓取订阅：{url}")
 
-    raw_nodes = []
-    for url, res in zip(urls, results):
-        if res:
-            print(f"[✓] 抓取成功: {url}  节点数: {len(res)}")
-            raw_nodes.extend(res)
-        else:
-            print(f"[×] 抓取失败: {url}")
-
-    print(f"📊 抓取完成，节点总数（含重复）: {len(raw_nodes)}")
+    print(f"📊 抓取完成，节点总数（含重复）: {len(all_nodes)}")
 
     unique_nodes_map = {}
-    for node in raw_nodes:
+    for node in all_nodes:
         key = extract_host_port(node)
         if key and key not in unique_nodes_map:
             unique_nodes_map[key] = node
 
-    all_nodes = list(unique_nodes_map.values())
-    print(f"🎯 去重后节点数: {len(all_nodes)}")
+    unique_nodes = list(unique_nodes_map.values())
+    print(f"🎯 去重后节点数: {len(unique_nodes)}")
 
-    print(f"🚦 开始节点延迟测试，共 {len(all_nodes)} 个节点")
-    tested = await test_all_nodes(all_nodes)
+    print(f"🚦 开始节点延迟测试，共 {len(unique_nodes)} 个节点")
+    tested_nodes = await test_all_nodes(unique_nodes)
 
-    print(f"\n✅ 测试完成: 成功 {len(tested)} / 总 {len(all_nodes)}")
+    print(f"\n✅ 测试完成: 成功 {len(tested_nodes)} / 总 {len(unique_nodes)}")
 
-    if not tested:
+    if not tested_nodes:
         print("[结果] 无可用节点")
         return
 
-    # 按延迟升序排序，保留前 MAX_OUTPUT_NODES 个
-    top_nodes = sorted(tested, key=lambda x: x[1])[:MAX_OUTPUT_NODES]
-    final_nodes = [node for node, _ in top_nodes]
-
-    combined = "\n".join(final_nodes)
+    combined = "\n".join(tested_nodes)
     encoded = base64.b64encode(combined.encode("utf-8")).decode("utf-8")
 
     with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
         f.write(encoded)
 
-    print(f"📦 已保存延迟最低的前 {len(final_nodes)} 个节点到: {OUTPUT_FILE}")
+    print(f"📦 有效节点已保存: {OUTPUT_FILE}（共 {len(tested_nodes)} 个）")
 
 if __name__ == "__main__":
     asyncio.run(main())
