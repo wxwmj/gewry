@@ -4,12 +4,11 @@ import base64
 import time
 from urllib.parse import urlparse
 from asyncio import Semaphore
-from tqdm.asyncio import tqdm_asyncio
 
-MAX_DELAY = 3000  # 3秒连接超时及最大延迟
-MAX_SAVE = 1000
-SUB_FILE = "subs.txt"
-OUTPUT_FILE = "sub"
+MAX_DELAY = 5000  # 最大延迟 ms
+MAX_SAVE = 1000   # 最大保存节点数
+SUB_FILE = "subs.txt"  # 订阅链接文件名
+OUTPUT_FILE = "sub"    # 输出文件名
 SUPPORTED_PROTOCOLS = ("vmess://", "ss://", "trojan://", "vless://", "hysteria://", "hysteria2://", "tuic://")
 
 def is_supported_node(url):
@@ -24,21 +23,20 @@ def base64_decode_links(data):
 
 async def fetch_subscription(session, url):
     try:
-        async with session.get(url, timeout=10) as resp:
+        async with session.get(url, timeout=3) as resp:  # 连接超时3秒
             raw = await resp.text()
             return base64_decode_links(raw)
     except Exception:
-        return None  # 返回 None 表示失败
+        print(f"[失败] 抓取订阅失败，请确认链接是否有效，并建议注释该链接：{url}")
+        return []
 
-def extract_host_port_protocol(node_url):
+def extract_host_port(node_url):
     try:
         parsed = urlparse(node_url)
         if parsed.hostname and parsed.port:
             port = int(parsed.port)
             if 0 < port < 65536:
-                # 返回协议 + 主机:端口，避免不同协议节点被去重
-                proto = node_url.split("://")[0]
-                return f"{proto}://{parsed.hostname}:{port}"
+                return f"{parsed.hostname}:{port}"
     except Exception:
         return None
     return None
@@ -60,93 +58,79 @@ async def test_single_node(node):
         host, port = parsed.hostname, parsed.port
         if not host or not port:
             return None
-        delay = await tcp_ping(host, port, timeout=MAX_DELAY / 1000)
+        delay = await tcp_ping(host, port, timeout=3)
         if delay is None or delay > MAX_DELAY:
             return None
         return node, delay
     except Exception:
         return None
 
+def print_progress(percent, success_count):
+    line = f"测试节点进度: {percent:6.2f}% | 成功: {success_count}"
+    max_len = 50
+    padded_line = line + " " * (max_len - len(line))
+    print("\r" + padded_line, end="", flush=True)
+
 async def test_all_nodes(nodes):
-    sem = Semaphore(32)
+    total = len(nodes)
+    success_count = 0
+    done_count = 0
     results = []
+    sem = Semaphore(32)
+    last_print_percent = 0
 
     async def test_node(node):
+        nonlocal success_count, done_count, last_print_percent
         async with sem:
             res = await test_single_node(node)
             if res is not None:
                 results.append(res)
+                success_count += 1
+            done_count += 1
+            percent = done_count / total * 100
+            if percent - last_print_percent >= 5 or percent == 100:
+                print_progress(percent, success_count)
+                last_print_percent = percent
 
-    # tqdm_asyncio支持异步任务进度条
-    await tqdm_asyncio.gather(*[test_node(node) for node in nodes], desc="测试节点延迟")
+    tasks = [test_node(node) for node in nodes]
+    await asyncio.gather(*tasks)
+    print()  # 换行避免进度卡在一行
 
     results.sort(key=lambda x: x[1])
     return [node for node, delay in results[:MAX_SAVE]]
-
-def mark_failed_urls_in_file(failed_urls):
-    """把 subs.txt 中失败的 URL 注释掉，其他行保持不变"""
-    try:
-        with open(SUB_FILE, "r", encoding="utf-8") as f:
-            lines = f.readlines()
-
-        with open(SUB_FILE, "w", encoding="utf-8") as f:
-            for line in lines:
-                stripped = line.strip()
-                # 已经注释过的直接写
-                if stripped.startswith("#"):
-                    f.write(line)
-                    continue
-                # 如果该行是失败订阅链接，则注释掉
-                if stripped in failed_urls:
-                    f.write("# " + line)
-                else:
-                    f.write(line)
-    except Exception as e:
-        print(f"[错误] 标记失败订阅链接时出错: {e}")
 
 async def main():
     print("📥 读取订阅链接...")
     try:
         with open(SUB_FILE, "r", encoding="utf-8") as f:
-            urls = [line.strip() for line in f if line.strip() and not line.strip().startswith("#")]
+            urls = [line.strip() for line in f if line.strip()]
     except FileNotFoundError:
         print(f"[错误] 未找到文件 {SUB_FILE}")
         return
 
     print("🌐 抓取订阅内容中...")
-    failed_urls = set()
-    all_nodes = []
     async with aiohttp.ClientSession() as session:
+        all_nodes = []
         for url in urls:
             nodes = await fetch_subscription(session, url)
-            if nodes is None:
-                print(f"[失败] 抓取订阅：{url}")
-                failed_urls.add(url)
-            elif nodes:
+            if nodes:
                 print(f"[成功] 抓取订阅：{url}，节点数: {len(nodes)}")
                 all_nodes.extend(nodes)
             else:
-                print(f"[失败] 抓取订阅但无有效节点：{url}")
-                failed_urls.add(url)
+                # 已在 fetch_subscription 里打印失败并提醒注释
+                pass
 
-    if failed_urls:
-        print(f"\n📌 标记 {len(failed_urls)} 个失败订阅链接为注释...")
-        mark_failed_urls_in_file(failed_urls)
+    print(f"📊 抓取完成，节点总数（含重复）: {len(all_nodes)}")
 
-    print(f"\n📊 抓取完成，节点总数（含重复）: {len(all_nodes)}")
-
+    # 去重逻辑优化，key = host:port
     unique_nodes_map = {}
     for node in all_nodes:
-        key = extract_host_port_protocol(node)
+        key = extract_host_port(node)
         if key and key not in unique_nodes_map:
             unique_nodes_map[key] = node
 
     unique_nodes = list(unique_nodes_map.values())
     print(f"🎯 去重后节点数: {len(unique_nodes)}")
-
-    if not unique_nodes:
-        print("[结果] 无可用节点，退出。")
-        return
 
     print(f"🚦 开始节点延迟测试，共 {len(unique_nodes)} 个节点")
     tested_nodes = await test_all_nodes(unique_nodes)
