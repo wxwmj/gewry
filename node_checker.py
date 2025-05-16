@@ -74,10 +74,8 @@ async def test_all_nodes(nodes):
                 return (node, delay)
             return None
 
-    tasks = [test_node(node) for node in nodes]
-    results = []
+    tasks = [asyncio.create_task(test_node(node)) for node in nodes]
 
-    # tqdm_asyncio.as_completed 迭代完成的任务，显示进度条
     async for coro in tqdm_asyncio.as_completed(tasks, total=len(nodes), desc="测试节点进度"):
         res = await coro
         if res:
