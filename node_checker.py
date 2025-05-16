@@ -70,29 +70,45 @@ async def test_all_nodes(nodes):
     total = len(nodes)
     success_count = 0
     done_count = 0
-    last_logged_percent = 0
     results = []
+    failed_nodes = []
     sem = Semaphore(32)
+    last_print_percent = 0
+
+    print(f"🚀 开始测速 {total} 个节点...")
+    start_time = time.time()
 
     async def test_node(node):
-        nonlocal success_count, done_count, last_logged_percent
+        nonlocal success_count, done_count, last_print_percent
         async with sem:
             res = await test_single_node(node)
             if res is not None:
                 results.append(res)
                 success_count += 1
+            else:
+                failed_nodes.append(node)
             done_count += 1
-            percent = int(done_count / total * 100)
-            if percent >= last_logged_percent + 10:
-                last_logged_percent = percent - percent % 10  # 向下取整为10的倍数
-                print(f"📊 测试进度：{last_logged_percent}% | 成功: {success_count}")
+            percent = done_count / total * 100
+            if percent - last_print_percent >= 10 or done_count == total:
+                print(f"测试进度: {percent:.0f}% | 成功: {success_count} / {done_count}")
+                last_print_percent = percent
 
     tasks = [test_node(node) for node in nodes]
     await asyncio.gather(*tasks)
 
+    duration = time.time() - start_time
+    print(f"\n⏱️ 测试完成，总耗时: {duration:.1f} 秒")
+    print(f"✅ 成功节点: {success_count}")
+    print(f"❌ 失败节点: {len(failed_nodes)}")
+
+    if failed_nodes:
+        with open("failed.txt", "w", encoding="utf-8") as f:
+            for node in failed_nodes:
+                f.write(node + "\n")
+        print("📄 失败节点已保存到 failed.txt")
+
     results.sort(key=lambda x: x[1])
     top_nodes = [node for node, delay in results[:MAX_SAVE]]
-
     return top_nodes
 
 async def main():
