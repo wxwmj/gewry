@@ -7,7 +7,7 @@ from asyncio import Semaphore
 import sys
 
 MAX_DELAY = 5000
-MAX_SAVE = 1000
+MAX_SAVE = 1000  # 保存测速后延迟最低的前1000条节点
 SUB_FILE = "subs.txt"
 OUTPUT_FILE = "sub"  # 输出文件名改为 sub（无扩展名）
 SUPPORTED_PROTOCOLS = ("vmess://", "ss://", "trojan://", "vless://", "hysteria://", "hysteria2://", "tuic://")
@@ -80,14 +80,14 @@ async def test_all_nodes(nodes):
                 results.append((node, delay))
                 success_count += 1
             done_count += 1
-            sys.stdout.write(f"\r测试进度 ({done_count}/{total}) 成功: {success_count}   ")
-            sys.stdout.flush()
+            # 一行动态刷新测试进度，避免多行打印
+            print(f"\r测试进度 ({done_count}/{total}) 成功: {success_count}   ", end="", flush=True)
 
     tasks = [test_node(node) for node in nodes]
     await asyncio.gather(*tasks)
-    print()
+    print()  # 最后换行，防止被后续打印覆盖
 
-    # 按延迟排序，取前MAX_SAVE条
+    # 按延迟排序，取前MAX_SAVE条节点
     results.sort(key=lambda x: x[1])
     top_nodes = [node for node, delay in results[:MAX_SAVE]]
 
@@ -102,32 +102,34 @@ async def main():
         print(f"[错误] 未找到文件 {SUB_FILE}")
         return
 
-    print("🌐 抓取订阅内容中...")
+    print("🌐 抓取订阅链接中...")
     async with aiohttp.ClientSession() as session:
-        all_nodes = []
-        for url in urls:
-            nodes = await fetch_subscription(session, url)
-            if nodes:
-                print(f"[成功] 抓取订阅：{url}，节点数: {len(nodes)}")
-                all_nodes.extend(nodes)
-            else:
-                print(f"[失败] 抓取订阅：{url}")
+        tasks = [fetch_subscription(session, url) for url in urls]
+        results = await asyncio.gather(*tasks)
 
-    print(f"📊 抓取完成，节点总数（含重复）: {len(all_nodes)}")
+    raw_nodes = []
+    for url, res in zip(urls, results):
+        if res:
+            print(f"[成功] 抓取链接: {url} 节点数: {len(res)}")
+        else:
+            print(f"[失败] 抓取链接: {url}")
+        raw_nodes.extend(res)
+
+    print(f"📊 抓取完成，节点总数（含重复）: {len(raw_nodes)}")
 
     unique_nodes_map = {}
-    for node in all_nodes:
+    for node in raw_nodes:
         key = extract_host_port(node)
         if key and key not in unique_nodes_map:
             unique_nodes_map[key] = node
 
-    unique_nodes = list(unique_nodes_map.values())
-    print(f"🎯 去重后节点数: {len(unique_nodes)}")
+    all_nodes = list(unique_nodes_map.values())
+    print(f"🎯 去重后节点数: {len(all_nodes)}")
 
-    print(f"🚦 开始节点延迟测试，共 {len(unique_nodes)} 个节点")
-    tested_nodes = await test_all_nodes(unique_nodes)
+    print(f"🚦 开始节点延迟测试，共 {len(all_nodes)} 个节点")
+    tested_nodes = await test_all_nodes(all_nodes)
 
-    print(f"\n✅ 测试完成: 成功 {len(tested_nodes)} / 总 {len(unique_nodes)}")
+    print(f"\n✅ 测试完成: 成功 {len(tested_nodes)} / 总 {len(all_nodes)}")
 
     if not tested_nodes:
         print("[结果] 无可用节点")
