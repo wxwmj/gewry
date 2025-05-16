@@ -8,7 +8,7 @@ from asyncio import Semaphore
 MAX_DELAY = 5000
 MAX_SAVE = 1000
 SUB_FILE = "subs.txt"
-OUTPUT_FILE = "sub"  # 输出文件名改为 sub（无扩展名）
+OUTPUT_FILE = "sub"
 SUPPORTED_PROTOCOLS = ("vmess://", "ss://", "trojan://", "vless://", "hysteria://", "hysteria2://", "tuic://")
 
 def is_supported_node(url):
@@ -36,8 +36,7 @@ def extract_host_port(node_url):
             port = int(parsed.port)
             if 0 < port < 65536:
                 return f"{parsed.hostname}:{port}"
-    except Exception as e:
-        print(f"[警告] 节点地址解析异常 {node_url}: {e}")
+    except Exception:
         return None
     return None
 
@@ -67,6 +66,14 @@ async def test_single_node(node):
     except Exception:
         return None
 
+line_template = "测试节点进度: {percent:6.2f}% | 成功: {success_count}"
+max_len = 50  # 估计最大行长度
+
+def print_progress(percent, success_count):
+    line = line_template.format(percent=percent, success_count=success_count)
+    padded_line = line + " " * (max_len - len(line))
+    print("\r" + padded_line, end="", flush=True)
+
 async def test_all_nodes(nodes):
     total = len(nodes)
     success_count = 0
@@ -78,17 +85,16 @@ async def test_all_nodes(nodes):
         nonlocal success_count, done_count
         async with sem:
             res = await test_single_node(node)
-            done_count += 1
             if res is not None:
                 results.append(res)
                 success_count += 1
+            done_count += 1
             percent = done_count / total * 100
-            # 一行进度，格式：测试节点进度:   0.00% | 成功: 1
-            print(f"\r测试节点进度: {percent:6.2f}% | 成功: {success_count}", end="", flush=True)
+            print_progress(percent, success_count)
 
     tasks = [test_node(node) for node in nodes]
     await asyncio.gather(*tasks)
-    print()  # 换行
+    print()  # 换行，避免进度条卡在同一行
 
     results.sort(key=lambda x: x[1])
     top_nodes = [node for node, delay in results[:MAX_SAVE]]
