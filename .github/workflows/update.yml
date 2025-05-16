@@ -2,7 +2,7 @@ name: Auto Update Sub
 
 on:
   schedule:
-    - cron: '0 * * * *'   # 每小时 UTC 整点执行
+    - cron: '0 */6 * * *'  # 每6小时运行一次（UTC时间）
   workflow_dispatch:
 
 jobs:
@@ -18,17 +18,12 @@ jobs:
       - name: 🔧 Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.10'
-
-      - name: ℹ️ Check Python version
-        run: python --version
+          python-version: '3.x'
 
       - name: 📦 Install dependencies
         run: pip install -r requirements.txt
 
       - name: 🚀 Run Node Checker
-        env:
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: python node_checker.py
 
       - name: 📤 Commit and push updated sub
