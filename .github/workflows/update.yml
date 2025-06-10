@@ -37,10 +37,11 @@ jobs:
           git config --global user.name "github-actions[bot]"
           git remote set-url origin https://x-access-token:${PAT_TOKEN}@github.com/${{ github.repository }}.git
 
-          # 只有output文件夹有文件时才提交
+          # 只有 output 文件夹存在且有文件时才提交
           if [ -d output ] && [ -n "$(find output -type f)" ]; then
             git add output
             git commit -m "🤖 自动更新 sub 文件 $(date '+%Y-%m-%d %H:%M:%S')" || echo "无变化无需提交"
             git push origin HEAD:${{ github.ref_name }}
           else
             echo "📭 没有生成任何 output 文件，跳过提交。"
+          fi
