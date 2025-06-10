@@ -22,35 +22,21 @@ jobs:
           python-version: '3.x'
 
       - name: 📦 Install dependencies
-        run: |
-          pip install -r requirements.txt
-          pip install aiohttp  # 安装额外的依赖 aiohttp
-
-      - name: 📂 Create output folder (if not exists) and clean up old files
-        run: |
-          # 创建 output 文件夹并清空旧文件
-          if [ ! -d "output" ]; then
-            mkdir output
-          else
-            rm -rf output/*  # 清空文件夹
-          fi
+        run: pip install -r requirements.txt
 
       - name: 🚀 Run Node Checker
-        run: python config/main.py  # 执行 config 文件夹中的 main.py
+        run: |
+          # 进入 config 文件夹
+          cd config
+          python main.py
 
       - name: 📤 Commit and push updated sub
         env:
           PAT_TOKEN: ${{ secrets.PAT_TOKEN }}
         run: |
-          # 检查 output 文件夹是否有更新的文件，并确保文件有至少 99 个节点
-          if [ "$(find output -type f | wc -l)" -gt 0 ] && [ "$(find output -type f -exec wc -l {} \; | awk '{sum += $1} END {print sum}')" -ge 99 ]; then
-            # 如果 output 文件夹有文件且节点数至少 99
-            git config --global user.email "github-actions[bot]@users.noreply.github.com"
-            git config --global user.name "github-actions[bot]"
-            git remote set-url origin https://x-access-token:${PAT_TOKEN}@github.com/${{ github.repository }}.git
-            git add output
-            git commit -m "🤖 自动更新 sub 文件 $(date '+%Y-%m-%d %H:%M:%S')" || echo "无变化无需提交"
-            git push origin HEAD:${{ github.ref_name }}
-          else
-            echo "📦 没有生成有效的订阅文件或节点数不足 99，跳过提交"
-          fi
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git config --global user.name "github-actions[bot]"
+          git remote set-url origin https://x-access-token:${PAT_TOKEN}@github.com/${{ github.repository }}.git
+          git add output
+          git commit -m "🤖 自动更新 sub 文件 $(date '+%Y-%m-%d %H:%M:%S')" || echo "无变化无需提交"
+          git push origin HEAD:${{ github.ref_name }}
