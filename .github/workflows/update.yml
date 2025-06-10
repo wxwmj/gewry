@@ -24,6 +24,10 @@ jobs:
       - name: 📦 Install dependencies
         run: pip install -r requirements.txt
 
+      - name: 🧹 Clean output folder
+        run: |
+          rm -rf output/*  # 清空 output 文件夹
+
       - name: 🚀 Run Node Checker
         run: |
           cd config  # 进入 config 文件夹
