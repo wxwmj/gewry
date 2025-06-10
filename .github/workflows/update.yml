@@ -28,6 +28,8 @@ jobs:
         run: |
           # 进入 config 文件夹
           cd config
+          # 确保 subs.txt 在正确路径
+          cp ../source/subs.txt ./subs.txt
           python main.py
 
       - name: 📤 Commit and push updated sub
