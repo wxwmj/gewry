@@ -2,22 +2,24 @@ import asyncio
 import aiohttp
 import base64
 import time
+import os
+import glob
 from urllib.parse import urlparse
 from asyncio import Semaphore
-import os
-import shutil
 
 MAX_DELAY = 5000  # 最大延迟 ms
 MAX_SAVE = 6666   # 最低延迟的最大节点数
 NODES_PER_FILE = 666  # 每个文件保存的节点数
-MIN_SAVE_NODES = 99   # 文件节点数小于此数不保存
-SUB_FILE = "../source/subs.txt"  # 订阅链接文件名，main.py在config目录
-OUTPUT_DIR = "../output"  # 输出文件夹，相对于config目录
+MIN_SAVE_COUNT = 99   # 文件保存的最低节点数限制
+SUB_FILE = "../source/subs.txt"  # 订阅链接文件名（相对config文件夹）
+OUTPUT_DIR = "../output"  # 保存文件夹（相对config文件夹）
 OUTPUT_FILE_PREFIX = "sub"  # 输出文件前缀
 SUPPORTED_PROTOCOLS = ("vmess://", "ss://", "trojan://", "vless://", "hysteria://", "hysteria2://", "tuic://")
 
+
 def is_supported_node(url):
     return url.startswith(SUPPORTED_PROTOCOLS)
+
 
 def base64_decode_links(data):
     try:
@@ -26,14 +28,16 @@ def base64_decode_links(data):
     except Exception:
         return [line.strip() for line in data.strip().splitlines() if is_supported_node(line)]
 
+
 async def fetch_subscription(session, url):
     try:
-        async with session.get(url, timeout=3) as resp:
+        async with session.get(url, timeout=3) as resp:  # 连接超时3秒
             raw = await resp.text()
             return base64_decode_links(raw)
     except Exception:
         print(f"[失败] 抓取订阅失败，请确认链接是否有效，并建议注释该链接：{url}")
         return []
+
 
 def extract_host_port(node_url):
     try:
@@ -46,6 +50,7 @@ def extract_host_port(node_url):
         return None
     return None
 
+
 async def tcp_ping(host, port, timeout=3):
     try:
         start = time.perf_counter()
@@ -56,6 +61,7 @@ async def tcp_ping(host, port, timeout=3):
         return int((end - start) * 1000)
     except Exception:
         return None
+
 
 async def test_single_node(node):
     try:
@@ -70,11 +76,13 @@ async def test_single_node(node):
     except Exception:
         return None
 
+
 def print_progress(percent, success_count):
     line = f"测试节点进度: {percent:6.2f}% | 成功: {success_count}"
     max_len = 50
     padded_line = line + " " * (max_len - len(line))
     print("\r" + padded_line, end="", flush=True)
+
 
 async def test_all_nodes(nodes):
     total = len(nodes)
@@ -101,36 +109,24 @@ async def test_all_nodes(nodes):
     await asyncio.gather(*tasks)
     print()  # 换行避免进度卡在一行
 
+    # 按延迟排序并返回前 MAX_SAVE 个节点
     results.sort(key=lambda x: x[1])
     return [node for node, delay in results[:MAX_SAVE]]
 
-def prepare_output_dir():
-    if os.path.exists(OUTPUT_DIR):
-        # 清空 output 文件夹内所有文件
-        for filename in os.listdir(OUTPUT_DIR):
-            file_path = os.path.join(OUTPUT_DIR, filename)
-            if os.path.isfile(file_path) or os.path.islink(file_path):
-                os.unlink(file_path)
-            elif os.path.isdir(file_path):
-                shutil.rmtree(file_path)
-    else:
-        os.makedirs(OUTPUT_DIR)
 
 async def save_nodes_to_file(nodes, file_index):
-    if len(nodes) < MIN_SAVE_NODES:
-        print(f"⚠️ 节点数 {len(nodes)} 少于 {MIN_SAVE_NODES}，跳过保存文件 sub{file_index}.txt")
-        return False
-    file_path = os.path.join(OUTPUT_DIR, f"{OUTPUT_FILE_PREFIX}{file_index}.txt")
-    with open(file_path, "w", encoding="utf-8") as f:
-        combined = "\n".join(nodes)
-        encoded = base64.b64encode(combined.encode("utf-8")).decode("utf-8")
+    if len(nodes) < MIN_SAVE_COUNT:
+        return False  # 不保存
+    combined = "\n".join(nodes)
+    encoded = base64.b64encode(combined.encode("utf-8")).decode("utf-8")
+    filename = os.path.join(OUTPUT_DIR, f"{OUTPUT_FILE_PREFIX}{file_index}.txt")
+    with open(filename, "w", encoding="utf-8") as f:
         f.write(encoded)
-    print(f"📦 文件 {file_path} 保存成功，节点数: {len(nodes)}")
+    print(f"📦 文件 {filename} 保存成功，节点数: {len(nodes)}")
     return True
 
-async def main():
-    prepare_output_dir()
 
+async def main():
     print("📥 读取订阅链接...")
     try:
         with open(SUB_FILE, "r", encoding="utf-8") as f:
@@ -150,5 +146,21 @@ async def main():
 
     print(f"📊 抓取完成，节点总数（含重复）: {len(all_nodes)}")
 
+    # 去重逻辑优化，key = host:port
     unique_nodes_map = {}
-    for node i
+    for node in all_nodes:
+        key = extract_host_port(node)
+        if key and key not in unique_nodes_map:
+            unique_nodes_map[key] = node
+
+    unique_nodes = list(unique_nodes_map.values())
+    print(f"🎯 去重后节点数: {len(unique_nodes)}")
+
+    print(f"🚦 开始节点延迟测试，共 {len(unique_nodes)} 个节点")
+    tested_nodes = await test_all_nodes(unique_nodes)
+
+    print(f"\n✅ 测试完成: 成功 {len(tested_nodes)} / 总 {len(unique_nodes)}")
+
+    if not tested_nodes:
+        print("[结果] 无可用节点")
+    
