@@ -2,8 +2,8 @@ name: Auto Update Sub
 
 on:
   schedule:
-    - cron: '0 22 * * *'  # 北京时间 06:00
-    - cron: '0 10 * * *'  # 北京时间 18:00
+    - cron: '0 22 * * *'  # 每天北京时间 06:00 执行
+    - cron: '0 10 * * *'  # 每天北京时间 18:00 执行
   workflow_dispatch:
 
 jobs:
@@ -26,8 +26,8 @@ jobs:
 
       - name: 🚀 Run Node Checker
         run: |
-          cd config
-          python main.py
+          cd config  # 进入 config 文件夹
+          python main.py  # 执行 main.py
 
       - name: 📤 Commit and push updated sub
         env:
@@ -36,12 +36,6 @@ jobs:
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
           git config --global user.name "github-actions[bot]"
           git remote set-url origin https://x-access-token:${PAT_TOKEN}@github.com/${{ github.repository }}.git
-
-          # 只有 output 文件夹存在且有文件时才提交
-          if [ -d output ] && [ -n "$(find output -type f)" ]; then
-            git add output
-            git commit -m "🤖 自动更新 sub 文件 $(date '+%Y-%m-%d %H:%M:%S')" || echo "无变化无需提交"
-            git push origin HEAD:${{ github.ref_name }}
-          else
-            echo "📭 没有生成任何 output 文件，跳过提交。"
-          fi
+          git add output  # 将更新的 output 文件夹提交
+          git commit -m "🤖 自动更新 sub 文件 $(date '+%Y-%m-%d %H:%M:%S')" || echo "无变化无需提交"
+          git push origin HEAD:${{ github.ref_name }}
