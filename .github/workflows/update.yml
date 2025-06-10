@@ -1,3 +1,5 @@
+# .github/workflows/auto_update.yml
+
 name: Auto Update Sub
 
 on:
@@ -24,9 +26,6 @@ jobs:
       - name: 📦 Install dependencies
         run: pip install -r requirements.txt
 
-      - name: 🧹 Clean output folder
-        run: rm -rf output/*
-
       - name: 🚀 Run Node Checker
         run: |
           cd config
@@ -40,10 +39,9 @@ jobs:
           git config --global user.name "github-actions[bot]"
           git remote set-url origin https://x-access-token:${PAT_TOKEN}@github.com/${{ github.repository }}.git
 
-          if [ -n "$(find output -type f)" ]; then
+          if [ -n "$(find output -type f 2>/dev/null)" ]; then
             git add output
             git commit -m "🤖 自动更新 sub 文件 $(date '+%Y-%m-%d %H:%M:%S')" || echo "无变化无需提交"
             git push origin HEAD:${{ github.ref_name }}
           else
             echo "📭 没有生成任何 output 文件，跳过提交。"
-          fi
