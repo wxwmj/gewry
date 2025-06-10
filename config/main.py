@@ -2,16 +2,16 @@ import asyncio
 import aiohttp
 import base64
 import time
+import os
+import shutil
 from urllib.parse import urlparse
 from asyncio import Semaphore
-import os
 
 MAX_DELAY = 5000  # 最大延迟 ms
 MAX_SAVE = 6666   # 最低延迟的最大节点数
 NODES_PER_FILE = 666  # 每个文件保存的节点数
-MIN_NODES_PER_FILE = 99  # 每个文件的最小节点数
-SUB_FILE = "source/subs.txt"  # 订阅链接文件名
-OUTPUT_DIR = "output"  # 输出文件夹
+SUB_FILE = "../source/subs.txt"  # 订阅链接文件名，正确的路径
+OUTPUT_FILE_PREFIX = "sub"  # 输出文件前缀
 SUPPORTED_PROTOCOLS = ("vmess://", "ss://", "trojan://", "vless://", "hysteria://", "hysteria2://", "tuic://")
 
 def is_supported_node(url):
@@ -103,35 +103,39 @@ async def test_all_nodes(nodes):
     results.sort(key=lambda x: x[1])
     return [node for node, delay in results[:MAX_SAVE]]
 
-async def save_nodes_to_file(nodes, file_index):
-    os.makedirs(OUTPUT_DIR, exist_ok=True)  # 确保输出文件夹存在
-
-    # 如果节点数不足 MIN_NODES_PER_FILE，跳过保存
-    if len(nodes) < MIN_NODES_PER_FILE:
-        print(f"⚠️ 文件 sub{file_index}.txt 的节点数不足 {MIN_NODES_PER_FILE}，跳过保存")
-        return
-
-    # 保存节点时确保文件包含 666 个节点
-    file_path = os.path.join(OUTPUT_DIR, f"sub{file_index}.txt")
-    with open(file_path, "w", encoding="utf-8") as f:
-        combined = "\n".join(nodes)
-        encoded = base64.b64encode(combined.encode("utf-8")).decode("utf-8")
-        f.write(encoded)
-    print(f"📦 文件 {file_path} 保存成功，节点数: {len(nodes)}")
-
-async def clear_output_directory():
-    # 清空输出文件夹中的所有文件
-    if os.path.exists(OUTPUT_DIR):
-        for filename in os.listdir(OUTPUT_DIR):
-            file_path = os.path.join(OUTPUT_DIR, filename)
+# 清空 output 文件夹
+def clean_output_folder():
+    output_folder = "output"
+    if os.path.exists(output_folder):
+        for filename in os.listdir(output_folder):
+            file_path = os.path.join(output_folder, filename)
             if os.path.isfile(file_path):
-                os.remove(file_path)
-        print(f"✅ 清空了文件夹 {OUTPUT_DIR} 中的旧文件")
+                os.remove(file_path)  # 删除文件
+            elif os.path.isdir(file_path):
+                shutil.rmtree(file_path)  # 删除文件夹
+
+# 在保存文件之前，先清空 output 文件夹
+def prepare_for_new_files():
+    print("清空 output 文件夹中的所有文件...")
+    clean_output_folder()
+
+async def save_nodes_to_file(nodes, file_index):
+    output_folder = "output"
+    # 如果文件夹不存在，创建它
+    if not os.path.exists(output_folder):
+        os.makedirs(output_folder)
+
+    if len(nodes) >= 99:  # 节点数大于或等于 99 才保存
+        file_name = f"{output_folder}/{OUTPUT_FILE_PREFIX}{file_index}.txt"
+        with open(file_name, "w", encoding="utf-8") as f:
+            combined = "\n".join(nodes)
+            encoded = base64.b64encode(combined.encode("utf-8")).decode("utf-8")
+            f.write(encoded)
+        print(f"📦 文件 {file_name} 保存成功，节点数: {len(nodes)}")
+    else:
+        print(f"[跳过] 文件 {file_index} 节点数不足 99，不保存。")
 
 async def main():
-    # 清空输出文件夹中的旧文件
-    await clear_output_directory()
-
     print("📥 读取订阅链接...")
     try:
         with open(SUB_FILE, "r", encoding="utf-8") as f:
@@ -172,13 +176,15 @@ async def main():
         print("[结果] 无可用节点")
         return
 
+    # 清空 output 文件夹
+    prepare_for_new_files()
+
     # 分文件保存
     file_index = 1
     nodes_batch = []
     for i, node in enumerate(tested_nodes, start=1):
         nodes_batch.append(node)
         if len(nodes_batch) == NODES_PER_FILE or i == len(tested_nodes):
-            # 保存时确保每个文件包含 NODES_PER_FILE 个节点
             await save_nodes_to_file(nodes_batch, file_index)
             file_index += 1
             nodes_batch = []
