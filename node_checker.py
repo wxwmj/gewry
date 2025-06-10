@@ -6,9 +6,10 @@ from urllib.parse import urlparse
 from asyncio import Semaphore
 
 MAX_DELAY = 5000  # 最大延迟 ms
-MAX_SAVE = 1000   # 最大保存节点数
+MAX_SAVE = 6666   # 最低延迟的最大节点数
+NODES_PER_FILE = 666  # 每个文件保存的节点数
 SUB_FILE = "subs.txt"  # 订阅链接文件名
-OUTPUT_FILE = "sub"    # 输出文件名
+OUTPUT_FILE_PREFIX = "sub"  # 输出文件前缀
 SUPPORTED_PROTOCOLS = ("vmess://", "ss://", "trojan://", "vless://", "hysteria://", "hysteria2://", "tuic://")
 
 def is_supported_node(url):
@@ -96,8 +97,16 @@ async def test_all_nodes(nodes):
     await asyncio.gather(*tasks)
     print()  # 换行避免进度卡在一行
 
+    # 按延迟排序并返回前 MAX_SAVE 个节点
     results.sort(key=lambda x: x[1])
     return [node for node, delay in results[:MAX_SAVE]]
+
+async def save_nodes_to_file(nodes, file_index):
+    with open(f"{OUTPUT_FILE_PREFIX}{file_index}.txt", "w", encoding="utf-8") as f:
+        combined = "\n".join(nodes)
+        encoded = base64.b64encode(combined.encode("utf-8")).decode("utf-8")
+        f.write(encoded)
+    print(f"📦 文件 {OUTPUT_FILE_PREFIX}{file_index}.txt 保存成功，节点数: {len(nodes)}")
 
 async def main():
     print("📥 读取订阅链接...")
@@ -117,8 +126,7 @@ async def main():
                 print(f"[成功] 抓取订阅：{url}，节点数: {len(nodes)}")
                 all_nodes.extend(nodes)
             else:
-                # 已在 fetch_subscription 里打印失败并提醒注释
-                pass
+                pass  # 已在 fetch_subscription 里打印失败并提醒注释
 
     print(f"📊 抓取完成，节点总数（含重复）: {len(all_nodes)}")
 
@@ -141,13 +149,15 @@ async def main():
         print("[结果] 无可用节点")
         return
 
-    combined = "\n".join(tested_nodes)
-    encoded = base64.b64encode(combined.encode("utf-8")).decode("utf-8")
-
-    with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
-        f.write(encoded)
-
-    print(f"📦 有效节点已保存: {OUTPUT_FILE}（共 {len(tested_nodes)} 个）")
+    # 分文件保存
+    file_index = 1
+    nodes_batch = []
+    for i, node in enumerate(tested_nodes, start=1):
+        nodes_batch.append(node)
+        if len(nodes_batch) == NODES_PER_FILE or i == len(tested_nodes):
+            await save_nodes_to_file(nodes_batch, file_index)
+            file_index += 1
+            nodes_batch = []
 
 if __name__ == "__main__":
     asyncio.run(main())
