@@ -2,15 +2,15 @@ import asyncio
 import aiohttp
 import base64
 import time
-import os
 from urllib.parse import urlparse
 from asyncio import Semaphore
+import os
 
 MAX_DELAY = 5000  # 最大延迟 ms
 MAX_SAVE = 6666   # 最低延迟的最大节点数
 NODES_PER_FILE = 666  # 每个文件保存的节点数
-SUB_FILE = "subs.txt"  # 订阅链接文件名
-OUTPUT_FILE_PREFIX = "sub"  # 输出文件前缀
+SUB_FILE = "source/subs.txt"  # 订阅链接文件名
+OUTPUT_DIR = "output"  # 输出文件夹
 SUPPORTED_PROTOCOLS = ("vmess://", "ss://", "trojan://", "vless://", "hysteria://", "hysteria2://", "tuic://")
 
 def is_supported_node(url):
@@ -103,24 +103,12 @@ async def test_all_nodes(nodes):
     return [node for node, delay in results[:MAX_SAVE]]
 
 async def save_nodes_to_file(nodes, file_index):
-    # 检查并创建 output 文件夹
-    if not os.path.exists("output"):
-        os.makedirs("output")
-    else:
-        # 清空 output 文件夹中的所有内容
-        for filename in os.listdir("output"):
-            file_path = os.path.join("output", filename)
-            if os.path.isfile(file_path):
-                os.remove(file_path)
-
-    # 保存文件路径更改为 output 文件夹
-    file_path = os.path.join("output", f"{OUTPUT_FILE_PREFIX}{file_index}.txt")
-    
+    os.makedirs(OUTPUT_DIR, exist_ok=True)  # 确保输出文件夹存在
+    file_path = os.path.join(OUTPUT_DIR, f"sub{file_index}.txt")
     with open(file_path, "w", encoding="utf-8") as f:
         combined = "\n".join(nodes)
         encoded = base64.b64encode(combined.encode("utf-8")).decode("utf-8")
         f.write(encoded)
-    
     print(f"📦 文件 {file_path} 保存成功，节点数: {len(nodes)}")
 
 async def main():
@@ -162,11 +150,6 @@ async def main():
 
     if not tested_nodes:
         print("[结果] 无可用节点")
-        return
-
-    # 如果有效节点数少于 99，直接放弃保存
-    if len(tested_nodes) < 99:
-        print(f"[结果] 测试通过的节点数少于 99，放弃保存！")
         return
 
     # 分文件保存
