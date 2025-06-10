@@ -2,15 +2,17 @@ import asyncio
 import aiohttp
 import base64
 import time
-import os
-import shutil
 from urllib.parse import urlparse
 from asyncio import Semaphore
+import os
+import shutil
 
 MAX_DELAY = 5000  # 最大延迟 ms
 MAX_SAVE = 6666   # 最低延迟的最大节点数
 NODES_PER_FILE = 666  # 每个文件保存的节点数
-SUB_FILE = "../source/subs.txt"  # 订阅链接文件名，正确的路径
+MIN_SAVE_NODES = 99   # 文件节点数小于此数不保存
+SUB_FILE = "../source/subs.txt"  # 订阅链接文件名，main.py在config目录
+OUTPUT_DIR = "../output"  # 输出文件夹，相对于config目录
 OUTPUT_FILE_PREFIX = "sub"  # 输出文件前缀
 SUPPORTED_PROTOCOLS = ("vmess://", "ss://", "trojan://", "vless://", "hysteria://", "hysteria2://", "tuic://")
 
@@ -26,7 +28,7 @@ def base64_decode_links(data):
 
 async def fetch_subscription(session, url):
     try:
-        async with session.get(url, timeout=3) as resp:  # 连接超时3秒
+        async with session.get(url, timeout=3) as resp:
             raw = await resp.text()
             return base64_decode_links(raw)
     except Exception:
@@ -99,43 +101,36 @@ async def test_all_nodes(nodes):
     await asyncio.gather(*tasks)
     print()  # 换行避免进度卡在一行
 
-    # 按延迟排序并返回前 MAX_SAVE 个节点
     results.sort(key=lambda x: x[1])
     return [node for node, delay in results[:MAX_SAVE]]
 
-# 清空 output 文件夹
-def clean_output_folder():
-    output_folder = "output"
-    if os.path.exists(output_folder):
-        for filename in os.listdir(output_folder):
-            file_path = os.path.join(output_folder, filename)
-            if os.path.isfile(file_path):
-                os.remove(file_path)  # 删除文件
+def prepare_output_dir():
+    if os.path.exists(OUTPUT_DIR):
+        # 清空 output 文件夹内所有文件
+        for filename in os.listdir(OUTPUT_DIR):
+            file_path = os.path.join(OUTPUT_DIR, filename)
+            if os.path.isfile(file_path) or os.path.islink(file_path):
+                os.unlink(file_path)
             elif os.path.isdir(file_path):
-                shutil.rmtree(file_path)  # 删除文件夹
-
-# 在保存文件之前，先清空 output 文件夹
-def prepare_for_new_files():
-    print("清空 output 文件夹中的所有文件...")
-    clean_output_folder()
+                shutil.rmtree(file_path)
+    else:
+        os.makedirs(OUTPUT_DIR)
 
 async def save_nodes_to_file(nodes, file_index):
-    output_folder = "output"
-    # 如果文件夹不存在，创建它
-    if not os.path.exists(output_folder):
-        os.makedirs(output_folder)
-
-    if len(nodes) >= 99:  # 节点数大于或等于 99 才保存
-        file_name = f"{output_folder}/{OUTPUT_FILE_PREFIX}{file_index}.txt"
-        with open(file_name, "w", encoding="utf-8") as f:
-            combined = "\n".join(nodes)
-            encoded = base64.b64encode(combined.encode("utf-8")).decode("utf-8")
-            f.write(encoded)
-        print(f"📦 文件 {file_name} 保存成功，节点数: {len(nodes)}")
-    else:
-        print(f"[跳过] 文件 {file_index} 节点数不足 99，不保存。")
+    if len(nodes) < MIN_SAVE_NODES:
+        print(f"⚠️ 节点数 {len(nodes)} 少于 {MIN_SAVE_NODES}，跳过保存文件 sub{file_index}.txt")
+        return False
+    file_path = os.path.join(OUTPUT_DIR, f"{OUTPUT_FILE_PREFIX}{file_index}.txt")
+    with open(file_path, "w", encoding="utf-8") as f:
+        combined = "\n".join(nodes)
+        encoded = base64.b64encode(combined.encode("utf-8")).decode("utf-8")
+        f.write(encoded)
+    print(f"📦 文件 {file_path} 保存成功，节点数: {len(nodes)}")
+    return True
 
 async def main():
+    prepare_output_dir()
+
     print("📥 读取订阅链接...")
     try:
         with open(SUB_FILE, "r", encoding="utf-8") as f:
@@ -152,42 +147,8 @@ async def main():
             if nodes:
                 print(f"[成功] 抓取订阅：{url}，节点数: {len(nodes)}")
                 all_nodes.extend(nodes)
-            else:
-                pass  # 已在 fetch_subscription 里打印失败并提醒注释
 
     print(f"📊 抓取完成，节点总数（含重复）: {len(all_nodes)}")
 
-    # 去重逻辑优化，key = host:port
     unique_nodes_map = {}
-    for node in all_nodes:
-        key = extract_host_port(node)
-        if key and key not in unique_nodes_map:
-            unique_nodes_map[key] = node
-
-    unique_nodes = list(unique_nodes_map.values())
-    print(f"🎯 去重后节点数: {len(unique_nodes)}")
-
-    print(f"🚦 开始节点延迟测试，共 {len(unique_nodes)} 个节点")
-    tested_nodes = await test_all_nodes(unique_nodes)
-
-    print(f"\n✅ 测试完成: 成功 {len(tested_nodes)} / 总 {len(unique_nodes)}")
-
-    if not tested_nodes:
-        print("[结果] 无可用节点")
-        return
-
-    # 清空 output 文件夹
-    prepare_for_new_files()
-
-    # 分文件保存
-    file_index = 1
-    nodes_batch = []
-    for i, node in enumerate(tested_nodes, start=1):
-        nodes_batch.append(node)
-        if len(nodes_batch) == NODES_PER_FILE or i == len(tested_nodes):
-            await save_nodes_to_file(nodes_batch, file_index)
-            file_index += 1
-            nodes_batch = []
-
-if __name__ == "__main__":
-    asyncio.run(main())
+    for node i
