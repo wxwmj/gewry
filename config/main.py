@@ -10,7 +10,7 @@ MAX_DELAY = 5000  # 最大延迟 ms
 MAX_SAVE = 6666   # 最低延迟的最大节点数
 NODES_PER_FILE = 666  # 每个文件保存的节点数
 MIN_NODES_PER_FILE = 99  # 每个文件的最小节点数
-SUB_FILE = "../source/subs.txt"  # 订阅链接文件名
+SUB_FILE = "source/subs.txt"  # 订阅链接文件名
 OUTPUT_DIR = "output"  # 输出文件夹
 SUPPORTED_PROTOCOLS = ("vmess://", "ss://", "trojan://", "vless://", "hysteria://", "hysteria2://", "tuic://")
 
