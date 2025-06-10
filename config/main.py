@@ -119,7 +119,19 @@ async def save_nodes_to_file(nodes, file_index):
         f.write(encoded)
     print(f"📦 文件 {file_path} 保存成功，节点数: {len(nodes)}")
 
+async def clear_output_directory():
+    # 清空输出文件夹中的所有文件
+    if os.path.exists(OUTPUT_DIR):
+        for filename in os.listdir(OUTPUT_DIR):
+            file_path = os.path.join(OUTPUT_DIR, filename)
+            if os.path.isfile(file_path):
+                os.remove(file_path)
+        print(f"✅ 清空了文件夹 {OUTPUT_DIR} 中的旧文件")
+
 async def main():
+    # 清空输出文件夹中的旧文件
+    await clear_output_directory()
+
     print("📥 读取订阅链接...")
     try:
         with open(SUB_FILE, "r", encoding="utf-8") as f:
