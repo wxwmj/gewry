@@ -1,5 +1,3 @@
-# .github/workflows/auto_update.yml
-
 name: Auto Update Sub
 
 on:
@@ -39,7 +37,8 @@ jobs:
           git config --global user.name "github-actions[bot]"
           git remote set-url origin https://x-access-token:${PAT_TOKEN}@github.com/${{ github.repository }}.git
 
-          if [ -n "$(find output -type f 2>/dev/null)" ]; then
+          # 只有output文件夹有文件时才提交
+          if [ -d output ] && [ -n "$(find output -type f)" ]; then
             git add output
             git commit -m "🤖 自动更新 sub 文件 $(date '+%Y-%m-%d %H:%M:%S')" || echo "无变化无需提交"
             git push origin HEAD:${{ github.ref_name }}
