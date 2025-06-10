@@ -36,7 +36,7 @@ jobs:
           fi
 
       - name: 🚀 Run Node Checker
-        run: python main.py  # 使用 main.py 文件
+        run: python config/main.py  # 执行 config 文件夹中的 main.py
 
       - name: 📤 Commit and push updated sub
         env:
