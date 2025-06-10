@@ -28,6 +28,7 @@ jobs:
         run: |
           # 进入 config 文件夹
           cd config
+          # 执行 main.py，确保路径正确
           python main.py
 
       - name: 📤 Commit and push updated sub
