@@ -9,6 +9,7 @@ import os
 MAX_DELAY = 5000  # 最大延迟 ms
 MAX_SAVE = 6666   # 最低延迟的最大节点数
 NODES_PER_FILE = 666  # 每个文件保存的节点数
+MIN_NODES_PER_FILE = 99  # 每个文件的最小节点数
 SUB_FILE = "source/subs.txt"  # 订阅链接文件名
 OUTPUT_DIR = "output"  # 输出文件夹
 SUPPORTED_PROTOCOLS = ("vmess://", "ss://", "trojan://", "vless://", "hysteria://", "hysteria2://", "tuic://")
@@ -104,6 +105,13 @@ async def test_all_nodes(nodes):
 
 async def save_nodes_to_file(nodes, file_index):
     os.makedirs(OUTPUT_DIR, exist_ok=True)  # 确保输出文件夹存在
+
+    # 如果节点数不足 MIN_NODES_PER_FILE，跳过保存
+    if len(nodes) < MIN_NODES_PER_FILE:
+        print(f"⚠️ 文件 sub{file_index}.txt 的节点数不足 {MIN_NODES_PER_FILE}，跳过保存")
+        return
+
+    # 保存节点时确保文件包含 666 个节点
     file_path = os.path.join(OUTPUT_DIR, f"sub{file_index}.txt")
     with open(file_path, "w", encoding="utf-8") as f:
         combined = "\n".join(nodes)
@@ -158,6 +166,7 @@ async def main():
     for i, node in enumerate(tested_nodes, start=1):
         nodes_batch.append(node)
         if len(nodes_batch) == NODES_PER_FILE or i == len(tested_nodes):
+            # 保存时确保每个文件包含 NODES_PER_FILE 个节点
             await save_nodes_to_file(nodes_batch, file_index)
             file_index += 1
             nodes_batch = []
