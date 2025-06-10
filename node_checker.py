@@ -2,6 +2,7 @@ import asyncio
 import aiohttp
 import base64
 import time
+import os
 from urllib.parse import urlparse
 from asyncio import Semaphore
 
@@ -102,11 +103,19 @@ async def test_all_nodes(nodes):
     return [node for node, delay in results[:MAX_SAVE]]
 
 async def save_nodes_to_file(nodes, file_index):
-    with open(f"{OUTPUT_FILE_PREFIX}{file_index}.txt", "w", encoding="utf-8") as f:
+    # 检查并创建 output 文件夹
+    if not os.path.exists("output"):
+        os.makedirs("output")
+
+    # 保存文件路径更改为 output 文件夹
+    file_path = os.path.join("output", f"{OUTPUT_FILE_PREFIX}{file_index}.txt")
+    
+    with open(file_path, "w", encoding="utf-8") as f:
         combined = "\n".join(nodes)
         encoded = base64.b64encode(combined.encode("utf-8")).decode("utf-8")
         f.write(encoded)
-    print(f"📦 文件 {OUTPUT_FILE_PREFIX}{file_index}.txt 保存成功，节点数: {len(nodes)}")
+    
+    print(f"📦 文件 {file_path} 保存成功，节点数: {len(nodes)}")
 
 async def main():
     print("📥 读取订阅链接...")
@@ -147,6 +156,11 @@ async def main():
 
     if not tested_nodes:
         print("[结果] 无可用节点")
+        return
+
+    # 如果有效节点数少于 99，直接放弃保存
+    if len(tested_nodes) < 99:
+        print(f"[结果] 测试通过的节点数少于 99，放弃保存！")
         return
 
     # 分文件保存
