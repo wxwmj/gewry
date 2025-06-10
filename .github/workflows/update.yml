@@ -22,7 +22,12 @@ jobs:
           python-version: '3.x'
 
       - name: 📦 Install dependencies
-        run: pip install -r requirements.txt
+        run: |
+          pip install -r requirements.txt
+          pip install aiohttp  # 安装额外的依赖 aiohttp
+
+      - name: 📂 Create output folder (if not exists)
+        run: mkdir -p output  # 创建 output 文件夹
 
       - name: 🚀 Run Node Checker
         run: python node_checker.py
@@ -31,9 +36,15 @@ jobs:
         env:
           PAT_TOKEN: ${{ secrets.PAT_TOKEN }}
         run: |
-          git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          git config --global user.name "github-actions[bot]"
-          git remote set-url origin https://x-access-token:${PAT_TOKEN}@github.com/${{ github.repository }}.git
-          git add sub
-          git commit -m "🤖 自动更新 sub 文件 $(date '+%Y-%m-%d %H:%M:%S')" || echo "无变化无需提交"
-          git push origin HEAD:${{ github.ref_name }}
+          # 检查 output 文件夹是否有更新
+          if [ "$(find output -type f | wc -l)" -gt 0 ]; then
+            # 如果 output 文件夹有文件
+            git config --global user.email "github-actions[bot]@users.noreply.github.com"
+            git config --global user.name "github-actions[bot]"
+            git remote set-url origin https://x-access-token:${PAT_TOKEN}@github.com/${{ github.repository }}.git
+            git add output
+            git commit -m "🤖 自动更新 sub 文件 $(date '+%Y-%m-%d %H:%M:%S')" || echo "无变化无需提交"
+            git push origin HEAD:${{ github.ref_name }}
+          else
+            echo "📦 没有生成新的订阅文件，跳过提交"
+          fi
