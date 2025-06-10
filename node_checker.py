@@ -106,6 +106,12 @@ async def save_nodes_to_file(nodes, file_index):
     # 检查并创建 output 文件夹
     if not os.path.exists("output"):
         os.makedirs("output")
+    else:
+        # 清空 output 文件夹中的所有内容
+        for filename in os.listdir("output"):
+            file_path = os.path.join("output", filename)
+            if os.path.isfile(file_path):
+                os.remove(file_path)
 
     # 保存文件路径更改为 output 文件夹
     file_path = os.path.join("output", f"{OUTPUT_FILE_PREFIX}{file_index}.txt")
