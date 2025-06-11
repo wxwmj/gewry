@@ -1,7 +1,1 @@
-
-https://raw.githubusercontent.com/snakem982/proxypool/main/source/clash-meta.yaml
-https://raw.githubusercontent.com/snakem982/proxypool/main/source/clash-meta-2.yaml
-https://raw.githubusercontent.com/go4sharing/sub/main/sub.yaml
-https://raw.githubusercontent.com/SoliSpirit/v2ray-configs/main/all_configs.txt
-https://raw.githubusercontent.com/firefoxmmx2/v2rayshare_subcription/main/subscription/clash_sub.yaml
-https://raw.githubusercontent.com/Roywaller/clash_subscription/main/clash_subscription.txt
+https://raw.githubusercontent.com/10ium/V2ray-Config/main/All_Configs_base64_Sub.txt
