@@ -12,17 +12,9 @@ import glob
 MAX_DELAY = 5000
 MAX_SAVE = 6666
 NODES_PER_FILE = 666
+SUB_FILE = "source/subs.txt"  # 确保是项目根目录下的 source 文件夹
 OUTPUT_FILE_PREFIX = "sub"
-SUPPORTED_PROTOCOLS = (
-    "vmess://", "ss://", "trojan://", "vless://",
-    "hysteria://", "hysteria2://", "tuic://"
-)
-
-def get_project_root():
-    # main.py 在 config 下，项目根目录上两级
-    return os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-
-SUB_FILE = os.path.join(get_project_root(), "source", "subs.txt")
+SUPPORTED_PROTOCOLS = ("vmess://", "ss://", "trojan://", "vless://", "hysteria://", "hysteria2://", "tuic://")
 
 def is_supported_node(url):
     return url.startswith(SUPPORTED_PROTOCOLS)
@@ -39,8 +31,8 @@ async def fetch_subscription(session, url):
         async with session.get(url, timeout=3) as resp:
             raw = await resp.text()
             return base64_decode_links(raw)
-    except Exception as e:
-        print(f"[失败] 抓取订阅失败，链接：{url}，错误：{e}")
+    except Exception:
+        print(f"[失败] 抓取订阅失败，请确认链接是否有效，并建议注释该链接：{url}")
         return []
 
 def extract_host_port(node_url):
@@ -112,42 +104,31 @@ async def test_all_nodes(nodes):
     return [node for node, delay in results[:MAX_SAVE]]
 
 def delete_old_output_folders():
-    root = get_project_root()
-    print(f"项目根目录路径: {root}")
-
-    old_folders = glob.glob(os.path.join(root, "output*"))
-    if not old_folders:
-        print("未找到旧目录 output，跳过删除。")
-        return
-
+    old_folders = glob.glob("output*")
     for folder in old_folders:
         if os.path.isdir(folder):
-            try:
-                print(f"🗑️ 删除旧目录：{folder}")
-                shutil.rmtree(folder)
-            except Exception as e:
-                print(f"[错误] 删除文件夹失败：{folder}，错误：{e}")
-        else:
-            print(f"[跳过] 不是目录，忽略：{folder}")
+            print(f"🗑️ 删除旧目录：{folder}")
+            shutil.rmtree(folder)
+    if not old_folders:
+        print("未找到旧目录 output，跳过删除。")
 
 def create_output_folder():
-    root = get_project_root()
     timestamp = datetime.now().strftime("%Y%m%d_%H%M")
-    folder_name = os.path.join(root, f"output{timestamp}")
+    folder_name = f"output{timestamp}"
     os.makedirs(folder_name)
     print(f"📂 新建保存文件夹: {folder_name}")
     return folder_name
 
 async def save_nodes_to_file(nodes, file_index, folder):
-    if len(nodes) >= NODES_PER_FILE:
-        file_name = os.path.join(folder, f"{OUTPUT_FILE_PREFIX}{file_index}.txt")
+    if len(nodes) >= 99:
+        file_name = f"{folder}/{OUTPUT_FILE_PREFIX}{file_index}.txt"
         with open(file_name, "w", encoding="utf-8") as f:
             combined = "\n".join(nodes)
             encoded = base64.b64encode(combined.encode("utf-8")).decode("utf-8")
             f.write(encoded)
         print(f"📦 文件 {file_name} 保存成功，节点数: {len(nodes)}")
     else:
-        print(f"[跳过] 文件 {file_index} 节点数不足 {NODES_PER_FILE}，不保存。")
+        print(f"[跳过] 文件 {file_index} 节点数不足 99，不保存。")
 
 async def main():
     print("📥 读取订阅链接...")
@@ -168,11 +149,7 @@ async def main():
                 all_nodes.extend(nodes)
 
     print(f"📊 抓取完成，节点总数（含重复）: {len(all_nodes)}")
-    unique_nodes_map = {}
-    for n in all_nodes:
-        hp = extract_host_port(n)
-        if hp:
-            unique_nodes_map[hp] = n
+    unique_nodes_map = {extract_host_port(n): n for n in all_nodes if extract_host_port(n)}
     unique_nodes = list(unique_nodes_map.values())
     print(f"🎯 去重后节点数: {len(unique_nodes)}")
 
@@ -184,6 +161,7 @@ async def main():
         print("[结果] 无可用节点")
         return
 
+    delete_old_output_folders()
     folder = create_output_folder()
 
     file_index = 1
@@ -196,6 +174,4 @@ async def main():
             nodes_batch = []
 
 if __name__ == "__main__":
-    print(f"程序启动时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    delete_old_output_folders()
     asyncio.run(main())
