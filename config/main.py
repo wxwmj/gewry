@@ -7,6 +7,7 @@ import shutil
 from urllib.parse import urlparse
 from asyncio import Semaphore
 from datetime import datetime, timezone, timedelta
+import glob
 
 MAX_DELAY = 5000
 MAX_SAVE = 6666
@@ -14,7 +15,6 @@ NODES_PER_FILE = 666
 SUB_FILE = os.path.join("source", "subs.txt")  # 项目根目录下的 source 文件夹
 OUTPUT_FILE_PREFIX = "sub"
 SUPPORTED_PROTOCOLS = ("vmess://", "ss://", "trojan://", "vless://", "hysteria://", "hysteria2://", "tuic://")
-FAIL_FOLDER = "fail"  # 失败链接保存文件夹
 
 
 def is_supported_node(url):
@@ -160,21 +160,8 @@ async def save_nodes_to_file(nodes, file_index, folder):
         print(f"[跳过] 文件 {file_index} 节点数不足 99，不保存。")
 
 
-def process_failed_links(fail_links):
-    if not os.path.exists(FAIL_FOLDER):
-        os.makedirs(FAIL_FOLDER)
-
-    fail_file = os.path.join(FAIL_FOLDER, "fail.txt")
-    with open(fail_file, "a", encoding="utf-8") as fail_f:
-        for link in fail_links:
-            fail_f.write(f"# {link}\n")
-        print(f"[注意] {len(fail_links)} 个订阅链接抓取失败，已保存至 {fail_file}")
-
-
 async def main():
     print("📥 读取订阅链接...")
-
-    # 读取并去重 subs.txt 文件中的订阅链接
     try:
         with open(SUB_FILE, "r", encoding="utf-8") as f:
             urls = [line.strip() for line in f if line.strip()]
@@ -182,25 +169,10 @@ async def main():
         print(f"[错误] 未找到文件 {SUB_FILE}")
         return
 
-    # 去重并保存失败的链接到 fail.txt
-    unique_urls = list(dict.fromkeys(urls))  # 使用 dict 去重链接
-
-    fail_links = []
-    valid_urls = []
-    for url in unique_urls:
-        nodes = await fetch_subscription(session, url)
-        if nodes:
-            valid_urls.append(url)
-        else:
-            fail_links.append(url)
-
-    if fail_links:
-        process_failed_links(fail_links)
-
     print("🌐 抓取订阅内容中...")
-    all_nodes = []
     async with aiohttp.ClientSession() as session:
-        for url in valid_urls:
+        all_nodes = []
+        for url in urls:
             nodes = await fetch_subscription(session, url)
             if nodes:
                 print(f"[成功] 抓取订阅：{url}，节点数: {len(nodes)}")
