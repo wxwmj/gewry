@@ -26,18 +26,18 @@ jobs:
 
       - name: 🚀 Run Node Checker
         run: |
-          cd config  # 进入 config 文件夹
-          python main.py  # 执行 main.py
+          cd config
+          python main.py
 
       - name: 📤 Commit and push updated sub
         env:
           PAT_TOKEN: ${{ secrets.PAT_TOKEN }}
         run: |
+          cd config
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
           git config --global user.name "github-actions[bot]"
           git remote set-url origin https://x-access-token:${PAT_TOKEN}@github.com/${{ github.repository }}.git
 
-          # 找最新的 output* 文件夹（按修改时间排序）
           latest_output=$(ls -dt output* 2>/dev/null | head -1)
 
           if [ -z "$latest_output" ]; then
@@ -47,7 +47,6 @@ jobs:
 
           echo "最新 output 文件夹：$latest_output"
 
-          # 清理旧的 output* 文件夹，保留最新的
           for dir in output*; do
             if [ "$dir" != "$latest_output" ]; then
               echo "删除旧目录：$dir"
