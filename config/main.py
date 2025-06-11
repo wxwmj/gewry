@@ -6,13 +6,12 @@ import os
 import shutil
 from urllib.parse import urlparse
 from asyncio import Semaphore
-from datetime import datetime, timedelta
+from datetime import datetime
 
 MAX_DELAY = 5000  # 最大延迟 ms
 MAX_SAVE = 6666   # 最低延迟的最大节点数
 NODES_PER_FILE = 666  # 每个文件保存的节点数
-SUB_FILE = "source/subs.txt"  # 订阅链接文件名，正确的路径
-OUTPUT_PREFIX = "output"  # 文件夹前缀
+SUB_FILE = "source/subs.txt"  # 订阅链接文件名，基于项目根目录
 OUTPUT_FILE_PREFIX = "sub"  # 输出文件前缀
 SUPPORTED_PROTOCOLS = ("vmess://", "ss://", "trojan://", "vless://", "hysteria://", "hysteria2://", "tuic://")
 
@@ -99,42 +98,27 @@ async def test_all_nodes(nodes):
 
     tasks = [test_node(node) for node in nodes]
     await asyncio.gather(*tasks)
-    print()
+    print()  # 换行避免进度卡在一行
 
+    # 按延迟排序并返回前 MAX_SAVE 个节点
     results.sort(key=lambda x: x[1])
     return [node for node, delay in results[:MAX_SAVE]]
 
-def get_bj_time_folder_name():
-    bj_time = datetime.utcnow() + timedelta(hours=8)
-    return f"{OUTPUT_PREFIX}{bj_time.strftime('%Y%m%d_%H%M')}"
-
-def clean_old_output_folders(root_dir):
-    # 删除所有以 output 开头的文件夹（旧输出）
-    for item in os.listdir(root_dir):
-        if item.startswith(OUTPUT_PREFIX) and os.path.isdir(os.path.join(root_dir, item)):
-            shutil.rmtree(os.path.join(root_dir, item))
-            print(f"删除旧目录：{item}")
-
-def prepare_output_folder():
-    # 根目录就是当前运行目录的父目录
-    root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-    clean_old_output_folders(root_dir)
-    folder_name = get_bj_time_folder_name()
-    output_path = os.path.join(root_dir, folder_name)
-    os.makedirs(output_path, exist_ok=True)
-    print(f"📂 新建保存文件夹: {folder_name}")
-    return output_path
-
-async def save_nodes_to_file(nodes, output_folder, file_index):
-    if len(nodes) >= 99:
-        file_name = os.path.join(output_folder, f"{OUTPUT_FILE_PREFIX}{file_index}.txt")
-        combined = "\n".join(nodes)
-        encoded = base64.b64encode(combined.encode("utf-8")).decode("utf-8")
-        with open(file_name, "w", encoding="utf-8") as f:
-            f.write(encoded)
-        print(f"📦 文件 {file_name} 保存成功，节点数: {len(nodes)}")
+def clear_old_output_folder():
+    old_folder = "output"
+    if os.path.exists(old_folder):
+        print(f"删除旧目录：{old_folder}")
+        shutil.rmtree(old_folder)
     else:
-        print(f"[跳过] 文件 {file_index} 节点数不足 99，不保存。")
+        print(f"未找到旧目录 {old_folder}，跳过删除。")
+
+def prepare_output_folder_with_timestamp():
+    clear_old_output_folder()
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M")
+    new_folder = f"output{timestamp}"
+    os.makedirs(new_folder, exist_ok=True)
+    print(f"新建保存文件夹: {new_folder}")
+    return new_folder
 
 async def main():
     print("📥 读取订阅链接...")
@@ -156,6 +140,7 @@ async def main():
 
     print(f"📊 抓取完成，节点总数（含重复）: {len(all_nodes)}")
 
+    # 去重逻辑优化，key = host:port
     unique_nodes_map = {}
     for node in all_nodes:
         key = extract_host_port(node)
@@ -174,14 +159,26 @@ async def main():
         print("[结果] 无可用节点")
         return
 
-    output_folder = prepare_output_folder()
+    output_folder = prepare_output_folder_with_timestamp()
 
+    async def save_nodes_to_file(nodes, file_index):
+        if len(nodes) >= 99:  # 节点数大于或等于 99 才保存
+            file_name = os.path.join(output_folder, f"{OUTPUT_FILE_PREFIX}{file_index}.txt")
+            with open(file_name, "w", encoding="utf-8") as f:
+                combined = "\n".join(nodes)
+                encoded = base64.b64encode(combined.encode("utf-8")).decode("utf-8")
+                f.write(encoded)
+            print(f"📦 文件 {file_name} 保存成功，节点数: {len(nodes)}")
+        else:
+            print(f"[跳过] 文件 {file_index} 节点数不足 99，不保存。")
+
+    # 分文件保存
     file_index = 1
     nodes_batch = []
     for i, node in enumerate(tested_nodes, start=1):
         nodes_batch.append(node)
         if len(nodes_batch) == NODES_PER_FILE or i == len(tested_nodes):
-            await save_nodes_to_file(nodes_batch, output_folder, file_index)
+            await save_nodes_to_file(nodes_batch, file_index)
             file_index += 1
             nodes_batch = []
 
