@@ -117,6 +117,10 @@ def get_beijing_time():
     return datetime.now(tz)
 
 
+def get_beijing_time_str():
+    return get_beijing_time().strftime("%Y-%m-%d %H:%M:%S")
+
+
 def clear_output_folder():
     folder = "output"
     if not os.path.exists(folder):
@@ -193,6 +197,9 @@ async def main():
 
     clear_output_folder()
     folder = get_output_folder()
+
+    # 这里打印自动更新时间
+    print(f"🤖 自动更新子文件 {get_beijing_time_str()}")
 
     file_index = 1
     nodes_batch = []
