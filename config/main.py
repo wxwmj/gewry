@@ -104,24 +104,31 @@ async def test_all_nodes(nodes):
     return [node for node, delay in results[:MAX_SAVE]]
 
 def delete_old_output_folders():
-    old_folders = glob.glob("output*")
-    for folder in old_folders:
-        if os.path.isdir(folder):
-            print(f"🗑️ 删除旧目录：{folder}")
-            shutil.rmtree(folder)
+    project_root = os.path.dirname(os.path.abspath(__file__))
+    # 列出根目录所有文件夹，筛选名称包含 output 的文件夹
+    old_folders = [f for f in os.listdir(project_root)
+                   if "output" in f and os.path.isdir(os.path.join(project_root, f))]
+
     if not old_folders:
-        print("未找到旧目录 output，跳过删除。")
+        print("未找到包含 'output' 的旧目录，跳过删除。")
+        return
+
+    for folder in old_folders:
+        full_path = os.path.join(project_root, folder)
+        print(f"🗑️ 删除旧目录：{full_path}")
+        shutil.rmtree(full_path)
 
 def create_output_folder():
+    project_root = os.path.dirname(os.path.abspath(__file__))
     timestamp = datetime.now().strftime("%Y%m%d_%H%M")
-    folder_name = f"output{timestamp}"
-    os.makedirs(folder_name)
+    folder_name = os.path.join(project_root, f"output{timestamp}")
+    os.makedirs(folder_name, exist_ok=True)
     print(f"📂 新建保存文件夹: {folder_name}")
     return folder_name
 
 async def save_nodes_to_file(nodes, file_index, folder):
     if len(nodes) >= 99:
-        file_name = f"{folder}/{OUTPUT_FILE_PREFIX}{file_index}.txt"
+        file_name = os.path.join(folder, f"{OUTPUT_FILE_PREFIX}{file_index}.txt")
         with open(file_name, "w", encoding="utf-8") as f:
             combined = "\n".join(nodes)
             encoded = base64.b64encode(combined.encode("utf-8")).decode("utf-8")
@@ -161,7 +168,8 @@ async def main():
         print("[结果] 无可用节点")
         return
 
-    delete_old_output_folders()
+    delete_old_output_folders()  # 自动删除根目录包含output的所有文件夹
+
     folder = create_output_folder()
 
     file_index = 1
