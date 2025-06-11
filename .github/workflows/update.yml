@@ -25,35 +25,15 @@ jobs:
         run: pip install -r requirements.txt
 
       - name: 🚀 Run Node Checker
-        run: |
-          cd config
-          python main.py
+        run: python config/main.py
 
       - name: 📤 Commit and push updated sub
         env:
           PAT_TOKEN: ${{ secrets.PAT_TOKEN }}
         run: |
-          cd config
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
           git config --global user.name "github-actions[bot]"
           git remote set-url origin https://x-access-token:${PAT_TOKEN}@github.com/${{ github.repository }}.git
-
-          latest_output=$(ls -dt output* 2>/dev/null | head -1)
-
-          if [ -z "$latest_output" ]; then
-            echo "未找到 output* 文件夹，跳过提交。"
-            exit 0
-          fi
-
-          echo "最新 output 文件夹：$latest_output"
-
-          for dir in output*; do
-            if [ "$dir" != "$latest_output" ]; then
-              echo "删除旧目录：$dir"
-              rm -rf "$dir"
-            fi
-          done
-
-          git add "$latest_output"
+          git add output*  # 这里用通配符加上时间戳文件夹
           git commit -m "🤖 自动更新 sub 文件 $(date '+%Y-%m-%d %H:%M:%S')" || echo "无变化无需提交"
           git push origin HEAD:${{ github.ref_name }}
