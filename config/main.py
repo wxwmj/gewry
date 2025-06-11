@@ -4,7 +4,6 @@ import base64
 import time
 import os
 import shutil
-import glob
 from urllib.parse import urlparse
 from asyncio import Semaphore
 from datetime import datetime
@@ -28,7 +27,7 @@ def base64_decode_links(data):
 
 async def fetch_subscription(session, url):
     try:
-        async with session.get(url, timeout=3) as resp:  # 连接超时3秒
+        async with session.get(url, timeout=3) as resp:
             raw = await resp.text()
             return base64_decode_links(raw)
     except Exception:
@@ -99,33 +98,38 @@ async def test_all_nodes(nodes):
 
     tasks = [test_node(node) for node in nodes]
     await asyncio.gather(*tasks)
-    print()  # 换行避免进度卡在一行
+    print()
 
-    results.sort(key=lambda x: x[1])  # 按延迟排序
+    results.sort(key=lambda x: x[1])
     return [node for node, delay in results[:MAX_SAVE]]
 
-# 获取当前时间戳格式 output20250611_1423
-def get_output_folder_name():
-    return "output" + datetime.now().strftime("%Y%m%d_%H%M")
+# 清空 output 文件夹（只清空，不删除output本身）
+def prepare_output_folder_base():
+    base_folder = "output"
+    if os.path.exists(base_folder):
+        for filename in os.listdir(base_folder):
+            file_path = os.path.join(base_folder, filename)
+            if os.path.isfile(file_path) or os.path.islink(file_path):
+                os.remove(file_path)
+            elif os.path.isdir(file_path):
+                shutil.rmtree(file_path)
+    else:
+        os.makedirs(base_folder)
+    print(f"✅ '{base_folder}' 文件夹已准备好（清空或新建）")
+    return base_folder
 
-# 清理所有旧 output* 文件夹
-def clean_all_output_folders():
-    for folder in glob.glob("output*"):
-        if os.path.isdir(folder):
-            shutil.rmtree(folder)
-            print(f"🧹 删除旧目录：{folder}")
-
-# 创建新的 output 文件夹
-def create_output_folder(folder_name):
-    os.makedirs(folder_name, exist_ok=True)
-    print(f"📂 创建新输出目录：{folder_name}")
+# 生成带时间戳的输出文件夹，返回路径
+def create_output_folder_with_timestamp():
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M")
+    folder_name = f"output{timestamp}"
+    if not os.path.exists(folder_name):
+        os.makedirs(folder_name)
+    print(f"📂 新建保存文件夹: {folder_name}")
+    return folder_name
 
 async def save_nodes_to_file(nodes, file_index, output_folder):
-    if not os.path.exists(output_folder):
-        os.makedirs(output_folder)
-
     if len(nodes) >= 99:
-        file_name = f"{output_folder}/{OUTPUT_FILE_PREFIX}{file_index:02d}.txt"
+        file_name = f"{output_folder}/{OUTPUT_FILE_PREFIX}{file_index}.txt"
         with open(file_name, "w", encoding="utf-8") as f:
             combined = "\n".join(nodes)
             encoded = base64.b64encode(combined.encode("utf-8")).decode("utf-8")
@@ -154,7 +158,6 @@ async def main():
 
     print(f"📊 抓取完成，节点总数（含重复）: {len(all_nodes)}")
 
-    # 去重
     unique_nodes_map = {}
     for node in all_nodes:
         key = extract_host_port(node)
@@ -173,18 +176,19 @@ async def main():
         print("[结果] 无可用节点")
         return
 
-    # 准备输出文件夹
-    clean_all_output_folders()
-    output_folder = get_output_folder_name()
-    create_output_folder(output_folder)
+    # 准备基础 output 文件夹（清空或新建）
+    prepare_output_folder_base()
 
-    # 分批保存
+    # 生成带时间戳的 output 文件夹，保存文件到这里
+    dated_output_folder = create_output_folder_with_timestamp()
+
+    # 分文件保存
     file_index = 1
     nodes_batch = []
     for i, node in enumerate(tested_nodes, start=1):
         nodes_batch.append(node)
         if len(nodes_batch) == NODES_PER_FILE or i == len(tested_nodes):
-            await save_nodes_to_file(nodes_batch, file_index, output_folder)
+            await save_nodes_to_file(nodes_batch, file_index, dated_output_folder)
             file_index += 1
             nodes_batch = []
 
