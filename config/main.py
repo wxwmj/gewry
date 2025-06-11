@@ -103,25 +103,29 @@ async def test_all_nodes(nodes):
     results.sort(key=lambda x: x[1])
     return [node for node, delay in results[:MAX_SAVE]]
 
-def delete_old_output_folders():
-    old_folders = glob.glob("output*")
-    for folder in old_folders:
-        if os.path.isdir(folder):
-            print(f"🗑️ 删除旧目录：{folder}")
-            shutil.rmtree(folder)
-    if not old_folders:
-        print("未找到旧目录 output，跳过删除。")
+def delete_old_output():
+    # 删除所有以 output 开头的文件夹和文件
+    old_items = glob.glob("output*")
+    for item in old_items:
+        if os.path.isdir(item):
+            print(f"🗑️ 删除旧目录：{item}")
+            shutil.rmtree(item)
+        elif os.path.isfile(item):
+            print(f"🗑️ 删除旧文件：{item}")
+            os.remove(item)
+    if not old_items:
+        print("未找到旧目录或文件 output*，跳过删除。")
 
 def create_output_folder():
     timestamp = datetime.now().strftime("%Y%m%d_%H%M")
     folder_name = f"output{timestamp}"
-    os.makedirs(folder_name)
+    os.makedirs(folder_name, exist_ok=True)
     print(f"📂 新建保存文件夹: {folder_name}")
     return folder_name
 
 async def save_nodes_to_file(nodes, file_index, folder):
     if len(nodes) >= 99:
-        file_name = f"{folder}/{OUTPUT_FILE_PREFIX}{file_index}.txt"
+        file_name = os.path.join(folder, f"{OUTPUT_FILE_PREFIX}{file_index}.txt")
         with open(file_name, "w", encoding="utf-8") as f:
             combined = "\n".join(nodes)
             encoded = base64.b64encode(combined.encode("utf-8")).decode("utf-8")
@@ -161,7 +165,10 @@ async def main():
         print("[结果] 无可用节点")
         return
 
-    delete_old_output_folders()
+    # 新增：先删除所有旧的 output* 文件夹和文件
+    delete_old_output()
+
+    # 创建新的 output 文件夹
     folder = create_output_folder()
 
     file_index = 1
