@@ -12,14 +12,12 @@ import glob
 MAX_DELAY = 5000
 MAX_SAVE = 6666
 NODES_PER_FILE = 666
-SUB_FILE = os.path.join("source", "subs.txt")  # 项目根目录下的 source 文件夹
+SUB_FILE = "source/subs.txt"  # 项目根目录下的 source 文件夹
 OUTPUT_FILE_PREFIX = "sub"
 SUPPORTED_PROTOCOLS = ("vmess://", "ss://", "trojan://", "vless://", "hysteria://", "hysteria2://", "tuic://")
 
-
 def is_supported_node(url):
     return url.startswith(SUPPORTED_PROTOCOLS)
-
 
 def base64_decode_links(data):
     try:
@@ -28,16 +26,14 @@ def base64_decode_links(data):
     except Exception:
         return [line.strip() for line in data.strip().splitlines() if is_supported_node(line)]
 
-
 async def fetch_subscription(session, url):
     try:
-        async with session.get(url, timeout=5) as resp:
+        async with session.get(url, timeout=3) as resp:
             raw = await resp.text()
             return base64_decode_links(raw)
     except Exception:
         print(f"[失败] 抓取订阅失败，请确认链接是否有效，并建议注释该链接：{url}")
         return []
-
 
 def extract_host_port(node_url):
     try:
@@ -50,7 +46,6 @@ def extract_host_port(node_url):
         return None
     return None
 
-
 async def tcp_ping(host, port, timeout=3):
     try:
         start = time.perf_counter()
@@ -61,7 +56,6 @@ async def tcp_ping(host, port, timeout=3):
         return int((end - start) * 1000)
     except Exception:
         return None
-
 
 async def test_single_node(node):
     try:
@@ -76,13 +70,11 @@ async def test_single_node(node):
     except Exception:
         return None
 
-
 def print_progress(percent, success_count):
     line = f"测试节点进度: {percent:6.2f}% | 成功: {success_count}"
     max_len = 50
     padded_line = line + " " * (max_len - len(line))
     print("\r" + padded_line, end="", flush=True)
-
 
 async def test_all_nodes(nodes):
     total = len(nodes)
@@ -111,50 +103,39 @@ async def test_all_nodes(nodes):
     results.sort(key=lambda x: x[1])
     return [node for node, delay in results[:MAX_SAVE]]
 
-
+# 获取中国北京时间
 def get_beijing_time():
     tz = timezone(timedelta(hours=8))
     return datetime.now(tz)
 
-
+# 获取格式化后的北京时间字符串
 def get_beijing_time_str():
-    return get_beijing_time().strftime("%Y-%m-%d %H:%M:%S")
+    return get_beijing_time().strftime("%Y-%m-%d %H:%M:%S")  # 格式化为 yyyy-MM-dd HH:mm:ss
 
-
-def clear_output_folder():
-    folder = "output"
-    if not os.path.exists(folder):
-        os.makedirs(folder)
-        print(f"📂 创建文件夹: {folder}")
+def delete_old_output_folders():
+    print("🔴 开始删除所有以 output 开头的文件夹或文件...")
+    old_items = glob.glob("output*")
+    if not old_items:
+        print("未找到旧目录或文件 output*，跳过删除。")
         return
+    for item in old_items:
+        if os.path.isdir(item):
+            print(f"🗑️ 删除旧目录：{item}")
+            shutil.rmtree(item)
+        elif os.path.isfile(item):
+            print(f"🗑️ 删除旧文件：{item}")
+            os.remove(item)
 
-    # 删除 output 文件夹内所有文件和子目录
-    for item in os.listdir(folder):
-        path = os.path.join(folder, item)
-        try:
-            if os.path.isfile(path):
-                os.remove(path)
-                print(f"🗑️ 删除旧文件：{path}")
-            elif os.path.isdir(path):
-                shutil.rmtree(path)
-                print(f"🗑️ 删除旧目录：{path}")
-        except Exception as e:
-            print(f"[错误] 删除 {path} 失败: {e}")
-
-
-def get_output_folder():
-    folder = "output"
-    if not os.path.exists(folder):
-        os.makedirs(folder)
-        print(f"📂 创建文件夹: {folder}")
-    else:
-        print(f"📂 使用现有文件夹: {folder}")
-    return folder
-
+def create_output_folder():
+    timestamp = get_beijing_time().strftime("%Y%m%d_%H%M")
+    folder_name = f"output{timestamp}"
+    os.makedirs(folder_name, exist_ok=True)
+    print(f"📂 新建保存文件夹: {folder_name}")
+    return folder_name
 
 async def save_nodes_to_file(nodes, file_index, folder):
     if len(nodes) >= 99:
-        file_name = os.path.join(folder, f"{OUTPUT_FILE_PREFIX}{file_index}.txt")
+        file_name = f"{folder}/{OUTPUT_FILE_PREFIX}{file_index}.txt"
         with open(file_name, "w", encoding="utf-8") as f:
             combined = "\n".join(nodes)
             encoded = base64.b64encode(combined.encode("utf-8")).decode("utf-8")
@@ -162,7 +143,6 @@ async def save_nodes_to_file(nodes, file_index, folder):
         print(f"📦 文件 {file_name} 保存成功，节点数: {len(nodes)}")
     else:
         print(f"[跳过] 文件 {file_index} 节点数不足 99，不保存。")
-
 
 async def main():
     print("📥 读取订阅链接...")
@@ -195,11 +175,8 @@ async def main():
         print("[结果] 无可用节点")
         return
 
-    clear_output_folder()
-    folder = get_output_folder()
-
-    # 这里打印自动更新时间
-    print(f"🤖 自动更新子文件 {get_beijing_time_str()}")
+    delete_old_output_folders()
+    folder = create_output_folder()
 
     file_index = 1
     nodes_batch = []
@@ -209,7 +186,6 @@ async def main():
             await save_nodes_to_file(nodes_batch, file_index, folder)
             file_index += 1
             nodes_batch = []
-
 
 if __name__ == "__main__":
     asyncio.run(main())
