@@ -2,8 +2,8 @@ name: Auto Update Sub
 
 on:
   schedule:
-    - cron: '0 22 * * *'  # 每天北京时间 06:00
-    - cron: '0 10 * * *'  # 每天北京时间 18:00
+    - cron: '0 22 * * *'
+    - cron: '0 10 * * *'
   workflow_dispatch:
 
 jobs:
@@ -11,29 +11,29 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: 📥 Checkout repository
+      - name: Checkout repository
         uses: actions/checkout@v4
         with:
           persist-credentials: false
 
-      - name: 🔧 Set up Python
+      - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.x'
 
-      - name: 📦 Install dependencies
+      - name: Install dependencies
         run: pip install -r requirements.txt
 
-      - name: 🚀 Run Node Checker
+      - name: Run Node Checker
         run: python config/main.py
 
-      - name: 📤 Commit and push updated sub
+      - name: Commit and push updated sub
         env:
           PAT_TOKEN: ${{ secrets.PAT_TOKEN }}
         run: |
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
           git config --global user.name "github-actions[bot]"
           git remote set-url origin https://x-access-token:${PAT_TOKEN}@github.com/${{ github.repository }}.git
-          git add output*  # 提交所有 output* 文件夹
+          git add output* || echo "未找到 output* 文件夹，跳过提交。"
           git commit -m "🤖 自动更新 sub 文件 $(date '+%Y-%m-%d %H:%M:%S')" || echo "无变化无需提交"
           git push origin HEAD:${{ github.ref_name }}
