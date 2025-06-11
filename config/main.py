@@ -12,7 +12,7 @@ import glob
 MAX_DELAY = 5000
 MAX_SAVE = 6666
 NODES_PER_FILE = 666
-SUB_FILE = "source/subs.txt"  # 项目根目录下的 source 文件夹
+SUB_FILE = "source/subs.txt"
 OUTPUT_FILE_PREFIX = "sub"
 SUPPORTED_PROTOCOLS = ("vmess://", "ss://", "trojan://", "vless://", "hysteria://", "hysteria2://", "tuic://")
 
@@ -108,18 +108,25 @@ def get_beijing_time():
     return datetime.now(tz)
 
 def delete_old_output_folders():
-    print("🔴 开始删除所有以 output 开头的文件夹或文件...")
+    print("🔴 开始清理所有以 output 开头的目录或文件...")
     old_items = glob.glob("output*")
+
     if not old_items:
-        print("未找到旧目录或文件 output*，跳过删除。")
+        print("✅ 未找到旧的 output* 文件或目录，无需清理。")
         return
+
     for item in old_items:
-        if os.path.isdir(item):
-            print(f"🗑️ 删除旧目录：{item}")
-            shutil.rmtree(item)
-        elif os.path.isfile(item):
-            print(f"🗑️ 删除旧文件：{item}")
-            os.remove(item)
+        try:
+            if os.path.isdir(item) and not os.path.islink(item):
+                shutil.rmtree(item)
+                print(f"🗑️ 删除旧目录：{item}")
+            elif os.path.isfile(item) or os.path.islink(item):
+                os.remove(item)
+                print(f"🗑️ 删除旧文件或符号链接：{item}")
+            else:
+                print(f"[警告] 未知类型，手动检查：{item}")
+        except Exception as e:
+            print(f"[错误] 删除失败：{item}，原因：{e}")
 
 def create_output_folder():
     timestamp = get_beijing_time().strftime("%Y%m%d_%H%M")
@@ -150,9 +157,10 @@ async def main():
 
     print("🌐 抓取订阅内容中...")
     async with aiohttp.ClientSession() as session:
+        tasks = [fetch_subscription(session, url) for url in urls]
+        results = await asyncio.gather(*tasks)
         all_nodes = []
-        for url in urls:
-            nodes = await fetch_subscription(session, url)
+        for url, nodes in zip(urls, results):
             if nodes:
                 print(f"[成功] 抓取订阅：{url}，节点数: {len(nodes)}")
                 all_nodes.extend(nodes)
