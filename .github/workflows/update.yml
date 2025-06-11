@@ -2,8 +2,8 @@ name: Auto Update Sub
 
 on:
   schedule:
-    - cron: '0 * * * *'   # 每小时 UTC 整点执行
-  workflow_dispatch:
+    - cron: '0 4,10 * * *'   # 每天 UTC 04:00 和 UTC 10:00 执行 (即北京时间 12:00 和 18:00)
+  workflow_dispatch:  # 允许手动触发工作流
 
 jobs:
   update-sub:
@@ -13,26 +13,36 @@ jobs:
       - name: 📥 Checkout repository
         uses: actions/checkout@v4
         with:
-          persist-credentials: false
+          persist-credentials: false  # 防止使用默认的 GitHub token，避免权限问题
 
       - name: 🔧 Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.x'
+          python-version: '3.x'  # 使用 Python 3.x，确保安装最新版本
 
       - name: 📦 Install dependencies
-        run: pip install -r requirements.txt
+        run: |
+          pip install -r requirements.txt  # 安装所需的依赖
 
       - name: 🚀 Run Node Checker
-        run: python node_checker.py
+        run: python node_checker.py  # 执行更新订阅的 Python 脚本，假设该脚本会更新订阅
 
       - name: 📤 Commit and push updated sub
         env:
-          PAT_TOKEN: ${{ secrets.PAT_TOKEN }}
+          PAT_TOKEN: ${{ secrets.PAT_TOKEN }}  # 使用 GitHub secret 中存储的 token 来进行身份验证
         run: |
+          # 配置 Git 用户信息
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
           git config --global user.name "github-actions[bot]"
+          
+          # 设置远程仓库 URL 使用 token 认证，确保提交时不会暴露密码
           git remote set-url origin https://x-access-token:${PAT_TOKEN}@github.com/${{ github.repository }}.git
-          git add sub
+          
+          # 将更新的 sub 文件添加到 git 并提交
+          git add sub  # 假设更新的订阅文件在 'sub' 目录下，修改为你实际路径
+          
+          # 如果没有更新，跳过提交
           git commit -m "🤖 自动更新 sub 文件 $(date '+%Y-%m-%d %H:%M:%S')" || echo "无变化无需提交"
+          
+          # 提交并推送到仓库
           git push origin HEAD:${{ github.ref_name }}
