@@ -6,14 +6,14 @@ import os
 import shutil
 from urllib.parse import urlparse
 from asyncio import Semaphore
-from datetime import datetime
+from datetime import datetime, timedelta
 
 MAX_DELAY = 5000  # 最大延迟 ms
 MAX_SAVE = 6666   # 最低延迟的最大节点数
 NODES_PER_FILE = 666  # 每个文件保存的节点数
-SUB_FILE = os.path.join(os.path.dirname(__file__), "../source/subs.txt")  # 订阅链接文件名，绝对路径
-OUTPUT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "output"))  # 根目录下的 output 文件夹路径
-
+SUB_FILE = "../source/subs.txt"  # 订阅链接文件名，正确的路径
+OUTPUT_PREFIX = "output"  # 文件夹前缀
+OUTPUT_FILE_PREFIX = "sub"  # 输出文件前缀
 SUPPORTED_PROTOCOLS = ("vmess://", "ss://", "trojan://", "vless://", "hysteria://", "hysteria2://", "tuic://")
 
 def is_supported_node(url):
@@ -99,39 +99,35 @@ async def test_all_nodes(nodes):
 
     tasks = [test_node(node) for node in nodes]
     await asyncio.gather(*tasks)
-    print()  # 换行避免进度卡在一行
+    print()
 
     results.sort(key=lambda x: x[1])
     return [node for node, delay in results[:MAX_SAVE]]
 
-def clean_folder(folder_path):
-    if os.path.exists(folder_path):
-        for filename in os.listdir(folder_path):
-            file_path = os.path.join(folder_path, filename)
-            if os.path.isfile(file_path):
-                os.remove(file_path)
-            elif os.path.isdir(file_path):
-                shutil.rmtree(file_path)
+def get_bj_time_folder_name():
+    bj_time = datetime.utcnow() + timedelta(hours=8)
+    return f"{OUTPUT_PREFIX}{bj_time.strftime('%Y%m%d_%H%M')}"
+
+def clean_old_output_folders(root_dir):
+    # 删除所有以 output 开头的文件夹（旧输出）
+    for item in os.listdir(root_dir):
+        if item.startswith(OUTPUT_PREFIX) and os.path.isdir(os.path.join(root_dir, item)):
+            shutil.rmtree(os.path.join(root_dir, item))
+            print(f"删除旧目录：{item}")
 
 def prepare_output_folder():
-    # 清空根目录下的 output 文件夹（保留文件夹本身）
-    if os.path.exists(OUTPUT_ROOT):
-        print(f"清空 {OUTPUT_ROOT} 文件夹中的所有文件...")
-        clean_folder(OUTPUT_ROOT)
-    else:
-        print(f"{OUTPUT_ROOT} 文件夹不存在，创建它...")
-        os.makedirs(OUTPUT_ROOT)
+    # 根目录就是当前运行目录的父目录
+    root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+    clean_old_output_folders(root_dir)
+    folder_name = get_bj_time_folder_name()
+    output_path = os.path.join(root_dir, folder_name)
+    os.makedirs(output_path, exist_ok=True)
+    print(f"📂 新建保存文件夹: {folder_name}")
+    return output_path
 
-    # 带日期时间的新文件夹
-    dt_str = datetime.now().strftime("%Y%m%d_%H%M")
-    new_folder = os.path.join(os.path.dirname(OUTPUT_ROOT), f"output{dt_str}")
-    os.makedirs(new_folder)
-    print(f"📂 新建保存文件夹: {new_folder}")
-    return new_folder
-
-async def save_nodes_to_file(nodes, folder_path, file_index):
+async def save_nodes_to_file(nodes, output_folder, file_index):
     if len(nodes) >= 99:
-        file_name = os.path.join(folder_path, f"sub{file_index}.txt")
+        file_name = os.path.join(output_folder, f"{OUTPUT_FILE_PREFIX}{file_index}.txt")
         combined = "\n".join(nodes)
         encoded = base64.b64encode(combined.encode("utf-8")).decode("utf-8")
         with open(file_name, "w", encoding="utf-8") as f:
@@ -178,16 +174,14 @@ async def main():
         print("[结果] 无可用节点")
         return
 
-    # 准备输出文件夹（清空旧output文件夹，创建带时间戳的新文件夹）
-    new_output_folder = prepare_output_folder()
+    output_folder = prepare_output_folder()
 
-    # 分批保存
     file_index = 1
     nodes_batch = []
     for i, node in enumerate(tested_nodes, start=1):
         nodes_batch.append(node)
         if len(nodes_batch) == NODES_PER_FILE or i == len(tested_nodes):
-            await save_nodes_to_file(nodes_batch, new_output_folder, file_index)
+            await save_nodes_to_file(nodes_batch, output_folder, file_index)
             file_index += 1
             nodes_batch = []
 
