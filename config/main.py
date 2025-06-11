@@ -71,10 +71,10 @@ async def test_single_node(node):
             return None
         delay = await tcp_ping(host, port, timeout=3)
         if delay is None or delay > MAX_DELAY:
-            return node + " # 失效"
+            return None
         return node, delay
     except Exception:
-        return node + " # 失效"
+        return None
 
 
 def print_progress(percent, success_count):
@@ -96,23 +96,20 @@ async def test_all_nodes(nodes):
         nonlocal success_count, done_count, last_print_percent
         async with sem:
             res = await test_single_node(node)
-            if isinstance(res, tuple):
+            if res is not None:
                 results.append(res)
                 success_count += 1
-            else:
-                failed_nodes.append(res)  # 失败节点
             done_count += 1
             percent = done_count / total * 100
             if percent - last_print_percent >= 5 or percent == 100:
                 print_progress(percent, success_count)
                 last_print_percent = percent
 
-    failed_nodes = []
     tasks = [test_node(node) for node in nodes]
     await asyncio.gather(*tasks)
     print()
     results.sort(key=lambda x: x[1])
-    return [node for node, delay in results[:MAX_SAVE]], failed_nodes
+    return [node for node, delay in results[:MAX_SAVE]]
 
 
 def get_beijing_time():
@@ -152,13 +149,19 @@ def get_output_folder():
 
 
 def get_fail_folder():
-    folder = "fail"
-    if not os.path.exists(folder):
-        os.makedirs(folder)
-        print(f"📂 创建文件夹: {folder}")
-    else:
-        print(f"📂 使用现有文件夹: {folder}")
-    return folder
+    fail_folder = "fail"
+    if not os.path.exists(fail_folder):
+        os.makedirs(fail_folder)
+        print(f"📂 创建文件夹: {fail_folder}")
+    return fail_folder
+
+
+async def save_failed_nodes_to_file(failed_nodes, folder):
+    fail_file = os.path.join(folder, "failed_nodes.txt")
+    with open(fail_file, "w", encoding="utf-8") as f:
+        for node in failed_nodes:
+            f.write(node + "\n")
+    print(f"📦 文件 {fail_file} 保存失败节点，节点数: {len(failed_nodes)}")
 
 
 async def save_nodes_to_file(nodes, file_index, folder):
@@ -173,15 +176,6 @@ async def save_nodes_to_file(nodes, file_index, folder):
         print(f"[跳过] 文件 {file_index} 节点数不足 99，不保存。")
 
 
-async def save_failed_nodes_to_file(failed_nodes):
-    fail_folder = get_fail_folder()
-    fail_file = os.path.join(fail_folder, "failed_nodes.txt")
-    with open(fail_file, "w", encoding="utf-8") as f:
-        for node in failed_nodes:
-            f.write(f"{node}\n")
-    print(f"📂 失败节点已保存到 {fail_file}")
-
-
 async def main():
     print("📥 读取订阅链接...")
     try:
@@ -191,14 +185,20 @@ async def main():
         print(f"[错误] 未找到文件 {SUB_FILE}")
         return
 
+    # 去重订阅链接
+    urls = list(set(urls))
+
     print("🌐 抓取订阅内容中...")
     async with aiohttp.ClientSession() as session:
         all_nodes = []
+        failed_nodes = []
         for url in urls:
             nodes = await fetch_subscription(session, url)
             if nodes:
                 print(f"[成功] 抓取订阅：{url}，节点数: {len(nodes)}")
                 all_nodes.extend(nodes)
+            else:
+                failed_nodes.append(f"{url} # 失效")
 
     print(f"📊 抓取完成，节点总数（含重复）: {len(all_nodes)}")
     unique_nodes_map = {extract_host_port(n): n for n in all_nodes if extract_host_port(n)}
@@ -206,12 +206,16 @@ async def main():
     print(f"🎯 去重后节点数: {len(unique_nodes)}")
 
     print(f"🚦 开始节点延迟测试，共 {len(unique_nodes)} 个节点")
-    tested_nodes, failed_nodes = await test_all_nodes(unique_nodes)
+    tested_nodes = await test_all_nodes(unique_nodes)
     print(f"\n✅ 测试完成: 成功 {len(tested_nodes)} / 总 {len(unique_nodes)}")
 
     if not tested_nodes:
         print("[结果] 无可用节点")
         return
+
+    # 保存失败节点到文件
+    fail_folder = get_fail_folder()
+    await save_failed_nodes_to_file(failed_nodes, fail_folder)
 
     clear_output_folder()
     folder = get_output_folder()
@@ -224,9 +228,6 @@ async def main():
             await save_nodes_to_file(nodes_batch, file_index, folder)
             file_index += 1
             nodes_batch = []
-
-    if failed_nodes:
-        await save_failed_nodes_to_file(failed_nodes)
 
 
 if __name__ == "__main__":
