@@ -71,10 +71,10 @@ async def test_single_node(node):
             return None
         delay = await tcp_ping(host, port, timeout=3)
         if delay is None or delay > MAX_DELAY:
-            return None
+            return node + " # 失效"
         return node, delay
     except Exception:
-        return None
+        return node + " # 失效"
 
 
 def print_progress(percent, success_count):
@@ -96,20 +96,23 @@ async def test_all_nodes(nodes):
         nonlocal success_count, done_count, last_print_percent
         async with sem:
             res = await test_single_node(node)
-            if res is not None:
+            if isinstance(res, tuple):
                 results.append(res)
                 success_count += 1
+            else:
+                failed_nodes.append(res)  # 失败节点
             done_count += 1
             percent = done_count / total * 100
             if percent - last_print_percent >= 5 or percent == 100:
                 print_progress(percent, success_count)
                 last_print_percent = percent
 
+    failed_nodes = []
     tasks = [test_node(node) for node in nodes]
     await asyncio.gather(*tasks)
     print()
     results.sort(key=lambda x: x[1])
-    return [node for node, delay in results[:MAX_SAVE]]
+    return [node for node, delay in results[:MAX_SAVE]], failed_nodes
 
 
 def get_beijing_time():
@@ -148,6 +151,16 @@ def get_output_folder():
     return folder
 
 
+def get_fail_folder():
+    folder = "fail"
+    if not os.path.exists(folder):
+        os.makedirs(folder)
+        print(f"📂 创建文件夹: {folder}")
+    else:
+        print(f"📂 使用现有文件夹: {folder}")
+    return folder
+
+
 async def save_nodes_to_file(nodes, file_index, folder):
     if len(nodes) >= 99:
         file_name = os.path.join(folder, f"{OUTPUT_FILE_PREFIX}{file_index}.txt")
@@ -158,6 +171,15 @@ async def save_nodes_to_file(nodes, file_index, folder):
         print(f"📦 文件 {file_name} 保存成功，节点数: {len(nodes)}")
     else:
         print(f"[跳过] 文件 {file_index} 节点数不足 99，不保存。")
+
+
+async def save_failed_nodes_to_file(failed_nodes):
+    fail_folder = get_fail_folder()
+    fail_file = os.path.join(fail_folder, "failed_nodes.txt")
+    with open(fail_file, "w", encoding="utf-8") as f:
+        for node in failed_nodes:
+            f.write(f"{node}\n")
+    print(f"📂 失败节点已保存到 {fail_file}")
 
 
 async def main():
@@ -184,7 +206,7 @@ async def main():
     print(f"🎯 去重后节点数: {len(unique_nodes)}")
 
     print(f"🚦 开始节点延迟测试，共 {len(unique_nodes)} 个节点")
-    tested_nodes = await test_all_nodes(unique_nodes)
+    tested_nodes, failed_nodes = await test_all_nodes(unique_nodes)
     print(f"\n✅ 测试完成: 成功 {len(tested_nodes)} / 总 {len(unique_nodes)}")
 
     if not tested_nodes:
@@ -202,6 +224,9 @@ async def main():
             await save_nodes_to_file(nodes_batch, file_index, folder)
             file_index += 1
             nodes_batch = []
+
+    if failed_nodes:
+        await save_failed_nodes_to_file(failed_nodes)
 
 
 if __name__ == "__main__":
