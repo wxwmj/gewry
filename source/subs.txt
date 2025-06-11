@@ -4,3 +4,7 @@ https://raw.githubusercontent.com/darknessm427/IranConfigCollector/main/bulk/ss_
 https://raw.githubusercontent.com/darknessm427/IranConfigCollector/main/bulk/trojan_iran.txt
 https://raw.githubusercontent.com/darknessm427/IranConfigCollector/main/bulk/vless_iran.txt
 https://raw.githubusercontent.com/darknessm427/IranConfigCollector/main/bulk/vmess_iran.txt
+
+https://raw.githubusercontent.com/darknessm427/IranConfigCollector/main/bulk/trojan_iran.txt
+https://raw.githubusercontent.com/darknessm427/IranConfigCollector/main/bulk/vless_iran.txt
+https://raw.githubusercontent.com/darknessm427/IranConfigCollector/main/bulk
