@@ -3,23 +3,19 @@ import aiohttp
 import base64
 import time
 import os
-import glob
+import shutil
 from urllib.parse import urlparse
 from asyncio import Semaphore
 
 MAX_DELAY = 5000  # 最大延迟 ms
 MAX_SAVE = 6666   # 最低延迟的最大节点数
 NODES_PER_FILE = 666  # 每个文件保存的节点数
-MIN_SAVE_COUNT = 99   # 文件保存的最低节点数限制
-SUB_FILE = "../source/subs.txt"  # 订阅链接文件名（相对config文件夹）
-OUTPUT_DIR = "../output"  # 保存文件夹（相对config文件夹）
+SUB_FILE = "../source/subs.txt"  # 订阅链接文件名，正确的路径
 OUTPUT_FILE_PREFIX = "sub"  # 输出文件前缀
 SUPPORTED_PROTOCOLS = ("vmess://", "ss://", "trojan://", "vless://", "hysteria://", "hysteria2://", "tuic://")
 
-
 def is_supported_node(url):
     return url.startswith(SUPPORTED_PROTOCOLS)
-
 
 def base64_decode_links(data):
     try:
@@ -27,7 +23,6 @@ def base64_decode_links(data):
         return [line.strip() for line in decoded.strip().splitlines() if is_supported_node(line)]
     except Exception:
         return [line.strip() for line in data.strip().splitlines() if is_supported_node(line)]
-
 
 async def fetch_subscription(session, url):
     try:
@@ -37,7 +32,6 @@ async def fetch_subscription(session, url):
     except Exception:
         print(f"[失败] 抓取订阅失败，请确认链接是否有效，并建议注释该链接：{url}")
         return []
-
 
 def extract_host_port(node_url):
     try:
@@ -50,7 +44,6 @@ def extract_host_port(node_url):
         return None
     return None
 
-
 async def tcp_ping(host, port, timeout=3):
     try:
         start = time.perf_counter()
@@ -61,7 +54,6 @@ async def tcp_ping(host, port, timeout=3):
         return int((end - start) * 1000)
     except Exception:
         return None
-
 
 async def test_single_node(node):
     try:
@@ -76,13 +68,11 @@ async def test_single_node(node):
     except Exception:
         return None
 
-
 def print_progress(percent, success_count):
     line = f"测试节点进度: {percent:6.2f}% | 成功: {success_count}"
     max_len = 50
     padded_line = line + " " * (max_len - len(line))
     print("\r" + padded_line, end="", flush=True)
-
 
 async def test_all_nodes(nodes):
     total = len(nodes)
@@ -113,18 +103,37 @@ async def test_all_nodes(nodes):
     results.sort(key=lambda x: x[1])
     return [node for node, delay in results[:MAX_SAVE]]
 
+# 清空 output 文件夹
+def clean_output_folder():
+    output_folder = "output"
+    if os.path.exists(output_folder):
+        for filename in os.listdir(output_folder):
+            file_path = os.path.join(output_folder, filename)
+            if os.path.isfile(file_path):
+                os.remove(file_path)  # 删除文件
+            elif os.path.isdir(file_path):
+                shutil.rmtree(file_path)  # 删除文件夹
+
+# 在保存文件之前，先清空 output 文件夹
+def prepare_for_new_files():
+    print("清空 output 文件夹中的所有文件...")
+    clean_output_folder()
 
 async def save_nodes_to_file(nodes, file_index):
-    if len(nodes) < MIN_SAVE_COUNT:
-        return False  # 不保存
-    combined = "\n".join(nodes)
-    encoded = base64.b64encode(combined.encode("utf-8")).decode("utf-8")
-    filename = os.path.join(OUTPUT_DIR, f"{OUTPUT_FILE_PREFIX}{file_index}.txt")
-    with open(filename, "w", encoding="utf-8") as f:
-        f.write(encoded)
-    print(f"📦 文件 {filename} 保存成功，节点数: {len(nodes)}")
-    return True
+    output_folder = "output"
+    # 如果文件夹不存在，创建它
+    if not os.path.exists(output_folder):
+        os.makedirs(output_folder)
 
+    if len(nodes) >= 99:  # 节点数大于或等于 99 才保存
+        file_name = f"{output_folder}/{OUTPUT_FILE_PREFIX}{file_index}.txt"
+        with open(file_name, "w", encoding="utf-8") as f:
+            combined = "\n".join(nodes)
+            encoded = base64.b64encode(combined.encode("utf-8")).decode("utf-8")
+            f.write(encoded)
+        print(f"📦 文件 {file_name} 保存成功，节点数: {len(nodes)}")
+    else:
+        print(f"[跳过] 文件 {file_index} 节点数不足 99，不保存。")
 
 async def main():
     print("📥 读取订阅链接...")
@@ -143,6 +152,8 @@ async def main():
             if nodes:
                 print(f"[成功] 抓取订阅：{url}，节点数: {len(nodes)}")
                 all_nodes.extend(nodes)
+            else:
+                pass  # 已在 fetch_subscription 里打印失败并提醒注释
 
     print(f"📊 抓取完成，节点总数（含重复）: {len(all_nodes)}")
 
@@ -163,4 +174,20 @@ async def main():
 
     if not tested_nodes:
         print("[结果] 无可用节点")
-    
+        return
+
+    # 清空 output 文件夹
+    prepare_for_new_files()
+
+    # 分文件保存
+    file_index = 1
+    nodes_batch = []
+    for i, node in enumerate(tested_nodes, start=1):
+        nodes_batch.append(node)
+        if len(nodes_batch) == NODES_PER_FILE or i == len(tested_nodes):
+            await save_nodes_to_file(nodes_batch, file_index)
+            file_index += 1
+            nodes_batch = []
+
+if __name__ == "__main__":
+    asyncio.run(main())
