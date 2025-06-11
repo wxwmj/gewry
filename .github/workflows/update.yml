@@ -2,8 +2,8 @@ name: Auto Update Sub
 
 on:
   schedule:
-    - cron: '0 22 * * *'  # 每天北京时间 06:00 执行
-    - cron: '0 10 * * *'  # 每天北京时间 18:00 执行
+    - cron: '0 22 * * *'  # 北京时间 06:00
+    - cron: '0 10 * * *'  # 北京时间 18:00
   workflow_dispatch:
 
 jobs:
@@ -34,13 +34,10 @@ jobs:
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
           git config --global user.name "github-actions[bot]"
           git remote set-url origin https://x-access-token:${PAT_TOKEN}@github.com/${{ github.repository }}.git
-
-          echo "🔍 检查是否存在 output* 文件夹..."
-          if ls output*/ > /dev/null 2>&1; then
-            echo "✅ 找到 output 文件夹，准备提交"
-            git add output*
-            git commit -m "🤖 自动更新 sub 文件 $(date '+%Y-%m-%d %H:%M:%S')" || echo "无变化无需提交"
-            git push origin HEAD:${{ github.ref_name }}
-          else
-            echo "⚠️ 未找到 output 文件夹，跳过提交"
-          fi
+          
+          latest_output=$(ls -dt output*/ | head -n 1 | tr -d '/')
+          echo "最新 output 文件夹：$latest_output"
+          
+          git add "$latest_output"
+          git commit -m "🤖 自动更新 sub 文件 $(date '+%Y-%m-%d %H:%M:%S')" || echo "无变化无需提交"
+          git push origin HEAD:${{ github.ref_name }}
