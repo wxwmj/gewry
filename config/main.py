@@ -148,22 +148,6 @@ def get_output_folder():
     return folder
 
 
-def get_fail_folder():
-    fail_folder = "fail"
-    if not os.path.exists(fail_folder):
-        os.makedirs(fail_folder)
-        print(f"📂 创建文件夹: {fail_folder}")
-    return fail_folder
-
-
-async def save_failed_nodes_to_file(failed_nodes, folder):
-    fail_file = os.path.join(folder, "failed_nodes.txt")
-    with open(fail_file, "w", encoding="utf-8") as f:
-        for node in failed_nodes:
-            f.write(node + "\n")
-    print(f"📦 文件 {fail_file} 保存失败节点，节点数: {len(failed_nodes)}")
-
-
 async def save_nodes_to_file(nodes, file_index, folder):
     if len(nodes) >= 99:
         file_name = os.path.join(folder, f"{OUTPUT_FILE_PREFIX}{file_index}.txt")
@@ -185,20 +169,14 @@ async def main():
         print(f"[错误] 未找到文件 {SUB_FILE}")
         return
 
-    # 去重订阅链接
-    urls = list(set(urls))
-
     print("🌐 抓取订阅内容中...")
     async with aiohttp.ClientSession() as session:
         all_nodes = []
-        failed_nodes = []
         for url in urls:
             nodes = await fetch_subscription(session, url)
             if nodes:
                 print(f"[成功] 抓取订阅：{url}，节点数: {len(nodes)}")
                 all_nodes.extend(nodes)
-            else:
-                failed_nodes.append(f"{url} # 失效")
 
     print(f"📊 抓取完成，节点总数（含重复）: {len(all_nodes)}")
     unique_nodes_map = {extract_host_port(n): n for n in all_nodes if extract_host_port(n)}
@@ -212,10 +190,6 @@ async def main():
     if not tested_nodes:
         print("[结果] 无可用节点")
         return
-
-    # 保存失败节点到文件
-    fail_folder = get_fail_folder()
-    await save_failed_nodes_to_file(failed_nodes, fail_folder)
 
     clear_output_folder()
     folder = get_output_folder()
