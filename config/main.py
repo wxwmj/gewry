@@ -11,7 +11,7 @@ from datetime import datetime, timedelta
 MAX_DELAY = 5000  # 最大延迟 ms
 MAX_SAVE = 6666   # 最低延迟的最大节点数
 NODES_PER_FILE = 666  # 每个文件保存的节点数
-SUB_FILE = "../source/subs.txt"  # 订阅链接文件名，正确的路径
+SUB_FILE = "source/subs.txt"  # 订阅链接文件名，正确的路径
 OUTPUT_PREFIX = "output"  # 文件夹前缀
 OUTPUT_FILE_PREFIX = "sub"  # 输出文件前缀
 SUPPORTED_PROTOCOLS = ("vmess://", "ss://", "trojan://", "vless://", "hysteria://", "hysteria2://", "tuic://")
