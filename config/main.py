@@ -11,7 +11,8 @@ from datetime import datetime
 MAX_DELAY = 5000  # 最大延迟 ms
 MAX_SAVE = 6666   # 最低延迟的最大节点数
 NODES_PER_FILE = 666  # 每个文件保存的节点数
-SUB_FILE = "source/subs.txt"  # 订阅链接文件名，基于项目根目录
+SUB_FILE = "source/subs.txt"  # 订阅链接文件名，正确的路径
+OUTPUT_PREFIX = "output"  # 输出文件夹名前缀
 OUTPUT_FILE_PREFIX = "sub"  # 输出文件前缀
 SUPPORTED_PROTOCOLS = ("vmess://", "ss://", "trojan://", "vless://", "hysteria://", "hysteria2://", "tuic://")
 
@@ -27,7 +28,7 @@ def base64_decode_links(data):
 
 async def fetch_subscription(session, url):
     try:
-        async with session.get(url, timeout=3) as resp:
+        async with session.get(url, timeout=3) as resp:  # 连接超时3秒
             raw = await resp.text()
             return base64_decode_links(raw)
     except Exception:
@@ -104,21 +105,37 @@ async def test_all_nodes(nodes):
     results.sort(key=lambda x: x[1])
     return [node for node, delay in results[:MAX_SAVE]]
 
-def clear_old_output_folder():
-    old_folder = "output"
-    if os.path.exists(old_folder):
-        print(f"删除旧目录：{old_folder}")
-        shutil.rmtree(old_folder)
-    else:
-        print(f"未找到旧目录 {old_folder}，跳过删除。")
+def clean_old_output_folders(base_dir="."):
+    deleted_any = False
+    for name in os.listdir(base_dir):
+        if name.startswith(OUTPUT_PREFIX) and os.path.isdir(os.path.join(base_dir, name)):
+            folder_path = os.path.join(base_dir, name)
+            print(f"删除旧目录：{folder_path}")
+            shutil.rmtree(folder_path)
+            deleted_any = True
+    if not deleted_any:
+        print(f"未找到旧目录 {OUTPUT_PREFIX}*，跳过删除。")
 
-def prepare_output_folder_with_timestamp():
-    clear_old_output_folder()
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M")
-    new_folder = f"output{timestamp}"
-    os.makedirs(new_folder, exist_ok=True)
-    print(f"新建保存文件夹: {new_folder}")
-    return new_folder
+def prepare_output_folder():
+    # 删除所有以 output 开头的旧文件夹
+    clean_old_output_folders()
+    # 创建新的带时间戳文件夹
+    now_str = datetime.now().strftime("%Y%m%d_%H%M")
+    output_folder = f"{OUTPUT_PREFIX}{now_str}"
+    os.makedirs(output_folder, exist_ok=True)
+    print(f"新建保存文件夹: {output_folder}")
+    return output_folder
+
+async def save_nodes_to_file(nodes, file_index, output_folder):
+    if len(nodes) >= 99:  # 节点数大于或等于 99 才保存
+        file_name = os.path.join(output_folder, f"{OUTPUT_FILE_PREFIX}{file_index}.txt")
+        with open(file_name, "w", encoding="utf-8") as f:
+            combined = "\n".join(nodes)
+            encoded = base64.b64encode(combined.encode("utf-8")).decode("utf-8")
+            f.write(encoded)
+        print(f"📦 文件 {file_name} 保存成功，节点数: {len(nodes)}")
+    else:
+        print(f"[跳过] 文件 {file_index} 节点数不足 99，不保存。")
 
 async def main():
     print("📥 读取订阅链接...")
@@ -159,18 +176,8 @@ async def main():
         print("[结果] 无可用节点")
         return
 
-    output_folder = prepare_output_folder_with_timestamp()
-
-    async def save_nodes_to_file(nodes, file_index):
-        if len(nodes) >= 99:  # 节点数大于或等于 99 才保存
-            file_name = os.path.join(output_folder, f"{OUTPUT_FILE_PREFIX}{file_index}.txt")
-            with open(file_name, "w", encoding="utf-8") as f:
-                combined = "\n".join(nodes)
-                encoded = base64.b64encode(combined.encode("utf-8")).decode("utf-8")
-                f.write(encoded)
-            print(f"📦 文件 {file_name} 保存成功，节点数: {len(nodes)}")
-        else:
-            print(f"[跳过] 文件 {file_index} 节点数不足 99，不保存。")
+    # 准备输出文件夹
+    output_folder = prepare_output_folder()
 
     # 分文件保存
     file_index = 1
@@ -178,7 +185,7 @@ async def main():
     for i, node in enumerate(tested_nodes, start=1):
         nodes_batch.append(node)
         if len(nodes_batch) == NODES_PER_FILE or i == len(tested_nodes):
-            await save_nodes_to_file(nodes_batch, file_index)
+            await save_nodes_to_file(nodes_batch, file_index, output_folder)
             file_index += 1
             nodes_batch = []
 
