@@ -4,8 +4,10 @@ import base64
 import time
 import os
 import shutil
+import glob
 from urllib.parse import urlparse
 from asyncio import Semaphore
+from datetime import datetime
 
 MAX_DELAY = 5000  # 最大延迟 ms
 MAX_SAVE = 6666   # 最低延迟的最大节点数
@@ -99,34 +101,31 @@ async def test_all_nodes(nodes):
     await asyncio.gather(*tasks)
     print()  # 换行避免进度卡在一行
 
-    # 按延迟排序并返回前 MAX_SAVE 个节点
-    results.sort(key=lambda x: x[1])
+    results.sort(key=lambda x: x[1])  # 按延迟排序
     return [node for node, delay in results[:MAX_SAVE]]
 
-# 清空 output 文件夹
-def clean_output_folder():
-    output_folder = "output"
-    if os.path.exists(output_folder):
-        for filename in os.listdir(output_folder):
-            file_path = os.path.join(output_folder, filename)
-            if os.path.isfile(file_path):
-                os.remove(file_path)  # 删除文件
-            elif os.path.isdir(file_path):
-                shutil.rmtree(file_path)  # 删除文件夹
+# 获取当前时间戳格式 output20250611_1423
+def get_output_folder_name():
+    return "output" + datetime.now().strftime("%Y%m%d_%H%M")
 
-# 在保存文件之前，先清空 output 文件夹
-def prepare_for_new_files():
-    print("清空 output 文件夹中的所有文件...")
-    clean_output_folder()
+# 清理所有旧 output* 文件夹
+def clean_all_output_folders():
+    for folder in glob.glob("output*"):
+        if os.path.isdir(folder):
+            shutil.rmtree(folder)
+            print(f"🧹 删除旧目录：{folder}")
 
-async def save_nodes_to_file(nodes, file_index):
-    output_folder = "output"
-    # 如果文件夹不存在，创建它
+# 创建新的 output 文件夹
+def create_output_folder(folder_name):
+    os.makedirs(folder_name, exist_ok=True)
+    print(f"📂 创建新输出目录：{folder_name}")
+
+async def save_nodes_to_file(nodes, file_index, output_folder):
     if not os.path.exists(output_folder):
         os.makedirs(output_folder)
 
-    if len(nodes) >= 99:  # 节点数大于或等于 99 才保存
-        file_name = f"{output_folder}/{OUTPUT_FILE_PREFIX}{file_index}.txt"
+    if len(nodes) >= 99:
+        file_name = f"{output_folder}/{OUTPUT_FILE_PREFIX}{file_index:02d}.txt"
         with open(file_name, "w", encoding="utf-8") as f:
             combined = "\n".join(nodes)
             encoded = base64.b64encode(combined.encode("utf-8")).decode("utf-8")
@@ -152,12 +151,10 @@ async def main():
             if nodes:
                 print(f"[成功] 抓取订阅：{url}，节点数: {len(nodes)}")
                 all_nodes.extend(nodes)
-            else:
-                pass  # 已在 fetch_subscription 里打印失败并提醒注释
 
     print(f"📊 抓取完成，节点总数（含重复）: {len(all_nodes)}")
 
-    # 去重逻辑优化，key = host:port
+    # 去重
     unique_nodes_map = {}
     for node in all_nodes:
         key = extract_host_port(node)
@@ -176,16 +173,18 @@ async def main():
         print("[结果] 无可用节点")
         return
 
-    # 清空 output 文件夹
-    prepare_for_new_files()
+    # 准备输出文件夹
+    clean_all_output_folders()
+    output_folder = get_output_folder_name()
+    create_output_folder(output_folder)
 
-    # 分文件保存
+    # 分批保存
     file_index = 1
     nodes_batch = []
     for i, node in enumerate(tested_nodes, start=1):
         nodes_batch.append(node)
         if len(nodes_batch) == NODES_PER_FILE or i == len(tested_nodes):
-            await save_nodes_to_file(nodes_batch, file_index)
+            await save_nodes_to_file(nodes_batch, file_index, output_folder)
             file_index += 1
             nodes_batch = []
 
