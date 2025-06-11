@@ -7,63 +7,21 @@ import shutil
 from urllib.parse import urlparse
 from asyncio import Semaphore
 from datetime import datetime, timezone, timedelta
-import glob
 
-# 配置常量
 MAX_DELAY = 5000
 MAX_SAVE = 6666
 NODES_PER_FILE = 666
 SUB_FILE = os.path.join("source", "subs.txt")  # 项目根目录下的 source 文件夹
 OUTPUT_FILE_PREFIX = "sub"
 SUPPORTED_PROTOCOLS = ("vmess://", "ss://", "trojan://", "vless://", "hysteria://", "hysteria2://", "tuic://")
-
-# 失败链接保存路径
-FAIL_FOLDER = "fail"
-FAIL_FILE = os.path.join(FAIL_FOLDER, "fail.txt")
-
-
-def ensure_fail_folder_exists():
-    """确保 fail 文件夹存在，如果不存在则创建"""
-    if not os.path.exists(FAIL_FOLDER):
-        os.makedirs(FAIL_FOLDER)
-        print(f"📂 创建文件夹: {FAIL_FOLDER}")
-
-
-def save_failed_links(failed_links):
-    """将失败的链接保存到 fail 文件夹中的 fail.txt"""
-    ensure_fail_folder_exists()
-    with open(FAIL_FILE, "a", encoding="utf-8") as f:
-        for link in failed_links:
-            f.write(f"# {link}\n")  # 注释掉失败的链接
-
-
-def remove_duplicates_and_save():
-    """从 subs.txt 读取链接并去重，更新文件"""
-    try:
-        with open(SUB_FILE, "r", encoding="utf-8") as f:
-            urls = [line.strip() for line in f if line.strip()]
-    except FileNotFoundError:
-        print(f"[错误] 未找到文件 {SUB_FILE}")
-        return []
-
-    # 去重并保留唯一的链接
-    unique_urls = list(set(urls))  # 使用 set 去重
-
-    # 将去重后的链接重新写入 subs.txt
-    with open(SUB_FILE, "w", encoding="utf-8") as f:
-        for url in unique_urls:
-            f.write(f"{url}\n")
-
-    return unique_urls
+FAIL_FOLDER = "fail"  # 失败链接保存文件夹
 
 
 def is_supported_node(url):
-    """判断链接是否为支持的协议"""
     return url.startswith(SUPPORTED_PROTOCOLS)
 
 
 def base64_decode_links(data):
-    """解码 Base64 格式的订阅链接"""
     try:
         decoded = base64.b64decode(data).decode("utf-8")
         return [line.strip() for line in decoded.strip().splitlines() if is_supported_node(line)]
@@ -72,20 +30,16 @@ def base64_decode_links(data):
 
 
 async def fetch_subscription(session, url):
-    """抓取订阅内容"""
     try:
         async with session.get(url, timeout=5) as resp:
             raw = await resp.text()
             return base64_decode_links(raw)
     except Exception:
-        print(f"[失败] 抓取订阅失败，已注释该链接: {url}")
-        # 保存失败链接，注释掉该链接并记录到 fail 文件夹
-        save_failed_links([url])
+        print(f"[失败] 抓取订阅失败，请确认链接是否有效，并建议注释该链接：{url}")
         return []
 
 
 def extract_host_port(node_url):
-    """提取节点的主机和端口"""
     try:
         parsed = urlparse(node_url)
         if parsed.hostname and parsed.port:
@@ -98,7 +52,6 @@ def extract_host_port(node_url):
 
 
 async def tcp_ping(host, port, timeout=3):
-    """测试节点延迟"""
     try:
         start = time.perf_counter()
         reader, writer = await asyncio.wait_for(asyncio.open_connection(host, port), timeout)
@@ -111,7 +64,6 @@ async def tcp_ping(host, port, timeout=3):
 
 
 async def test_single_node(node):
-    """测试单个节点的延迟"""
     try:
         parsed = urlparse(node)
         host, port = parsed.hostname, parsed.port
@@ -126,7 +78,6 @@ async def test_single_node(node):
 
 
 def print_progress(percent, success_count):
-    """打印节点测试进度"""
     line = f"测试节点进度: {percent:6.2f}% | 成功: {success_count}"
     max_len = 50
     padded_line = line + " " * (max_len - len(line))
@@ -134,7 +85,6 @@ def print_progress(percent, success_count):
 
 
 async def test_all_nodes(nodes):
-    """测试所有节点的延迟并返回可用节点"""
     total = len(nodes)
     success_count = 0
     done_count = 0
@@ -163,13 +113,11 @@ async def test_all_nodes(nodes):
 
 
 def get_beijing_time():
-    """获取北京时间"""
     tz = timezone(timedelta(hours=8))
     return datetime.now(tz)
 
 
 def clear_output_folder():
-    """清空输出文件夹"""
     folder = "output"
     if not os.path.exists(folder):
         os.makedirs(folder)
@@ -191,7 +139,6 @@ def clear_output_folder():
 
 
 def get_output_folder():
-    """获取输出文件夹"""
     folder = "output"
     if not os.path.exists(folder):
         os.makedirs(folder)
@@ -202,7 +149,6 @@ def get_output_folder():
 
 
 async def save_nodes_to_file(nodes, file_index, folder):
-    """保存节点到文件"""
     if len(nodes) >= 99:
         file_name = os.path.join(folder, f"{OUTPUT_FILE_PREFIX}{file_index}.txt")
         with open(file_name, "w", encoding="utf-8") as f:
@@ -214,32 +160,52 @@ async def save_nodes_to_file(nodes, file_index, folder):
         print(f"[跳过] 文件 {file_index} 节点数不足 99，不保存。")
 
 
-async def main():
-    print("📥 读取并去重订阅链接...")
-    # 读取并去重后的订阅链接
-    urls = remove_duplicates_and_save()
+def process_failed_links(fail_links):
+    if not os.path.exists(FAIL_FOLDER):
+        os.makedirs(FAIL_FOLDER)
 
-    if not urls:
-        print("[错误] 没有有效的订阅链接可用")
+    fail_file = os.path.join(FAIL_FOLDER, "fail.txt")
+    with open(fail_file, "a", encoding="utf-8") as fail_f:
+        for link in fail_links:
+            fail_f.write(f"# {link}\n")
+        print(f"[注意] {len(fail_links)} 个订阅链接抓取失败，已保存至 {fail_file}")
+
+
+async def main():
+    print("📥 读取订阅链接...")
+
+    # 读取并去重 subs.txt 文件中的订阅链接
+    try:
+        with open(SUB_FILE, "r", encoding="utf-8") as f:
+            urls = [line.strip() for line in f if line.strip()]
+    except FileNotFoundError:
+        print(f"[错误] 未找到文件 {SUB_FILE}")
         return
 
-    print("🌐 抓取订阅内容中...")
-    async with aiohttp.ClientSession() as session:
-        all_nodes = []
-        failed_links = []
+    # 去重并保存失败的链接到 fail.txt
+    unique_urls = list(dict.fromkeys(urls))  # 使用 dict 去重链接
 
-        for url in urls:
+    fail_links = []
+    valid_urls = []
+    for url in unique_urls:
+        nodes = await fetch_subscription(session, url)
+        if nodes:
+            valid_urls.append(url)
+        else:
+            fail_links.append(url)
+
+    if fail_links:
+        process_failed_links(fail_links)
+
+    print("🌐 抓取订阅内容中...")
+    all_nodes = []
+    async with aiohttp.ClientSession() as session:
+        for url in valid_urls:
             nodes = await fetch_subscription(session, url)
             if nodes:
                 print(f"[成功] 抓取订阅：{url}，节点数: {len(nodes)}")
                 all_nodes.extend(nodes)
-            else:
-                failed_links.append(url)
 
-        if failed_links:
-            print(f"[注意] {len(failed_links)} 个订阅链接抓取失败，已保存至 {FAIL_FILE}")
-
-    # 去重后的节点处理
     print(f"📊 抓取完成，节点总数（含重复）: {len(all_nodes)}")
     unique_nodes_map = {extract_host_port(n): n for n in all_nodes if extract_host_port(n)}
     unique_nodes = list(unique_nodes_map.values())
@@ -250,22 +216,21 @@ async def main():
     print(f"\n✅ 测试完成: 成功 {len(tested_nodes)} / 总 {len(unique_nodes)}")
 
     if not tested_nodes:
-        print("[结果] 没有可用节点")
+        print("[结果] 无可用节点")
         return
 
-    # 获取输出文件夹
-    output_folder = get_output_folder()
-
-    # 清空旧文件夹
     clear_output_folder()
+    folder = get_output_folder()
 
-    # 保存有效节点
-    print("💾 保存有效节点...")
-    output_file_count = 1
-    for i in range(0, len(tested_nodes), NODES_PER_FILE):
-        nodes_chunk = tested_nodes[i:i + NODES_PER_FILE]
-        await save_nodes_to_file(nodes_chunk, output_file_count, output_folder)
-        output_file_count += 1
+    file_index = 1
+    nodes_batch = []
+    for i, node in enumerate(tested_nodes, start=1):
+        nodes_batch.append(node)
+        if len(nodes_batch) == NODES_PER_FILE or i == len(tested_nodes):
+            await save_nodes_to_file(nodes_batch, file_index, folder)
+            file_index += 1
+            nodes_batch = []
+
 
 if __name__ == "__main__":
     asyncio.run(main())
