@@ -11,8 +11,9 @@ from datetime import datetime
 MAX_DELAY = 5000  # 最大延迟 ms
 MAX_SAVE = 6666   # 最低延迟的最大节点数
 NODES_PER_FILE = 666  # 每个文件保存的节点数
-SUB_FILE = "../source/subs.txt"  # 订阅链接文件名，正确的路径
-OUTPUT_FILE_PREFIX = "sub"  # 输出文件前缀
+SUB_FILE = os.path.join(os.path.dirname(__file__), "../source/subs.txt")  # 订阅链接文件名，绝对路径
+OUTPUT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "output"))  # 根目录下的 output 文件夹路径
+
 SUPPORTED_PROTOCOLS = ("vmess://", "ss://", "trojan://", "vless://", "hysteria://", "hysteria2://", "tuic://")
 
 def is_supported_node(url):
@@ -98,41 +99,42 @@ async def test_all_nodes(nodes):
 
     tasks = [test_node(node) for node in nodes]
     await asyncio.gather(*tasks)
-    print()
+    print()  # 换行避免进度卡在一行
 
     results.sort(key=lambda x: x[1])
     return [node for node, delay in results[:MAX_SAVE]]
 
-# 清空 output 文件夹（只清空，不删除output本身）
-def prepare_output_folder_base():
-    base_folder = "output"
-    if os.path.exists(base_folder):
-        for filename in os.listdir(base_folder):
-            file_path = os.path.join(base_folder, filename)
-            if os.path.isfile(file_path) or os.path.islink(file_path):
+def clean_folder(folder_path):
+    if os.path.exists(folder_path):
+        for filename in os.listdir(folder_path):
+            file_path = os.path.join(folder_path, filename)
+            if os.path.isfile(file_path):
                 os.remove(file_path)
             elif os.path.isdir(file_path):
                 shutil.rmtree(file_path)
+
+def prepare_output_folder():
+    # 清空根目录下的 output 文件夹（保留文件夹本身）
+    if os.path.exists(OUTPUT_ROOT):
+        print(f"清空 {OUTPUT_ROOT} 文件夹中的所有文件...")
+        clean_folder(OUTPUT_ROOT)
     else:
-        os.makedirs(base_folder)
-    print(f"✅ '{base_folder}' 文件夹已准备好（清空或新建）")
-    return base_folder
+        print(f"{OUTPUT_ROOT} 文件夹不存在，创建它...")
+        os.makedirs(OUTPUT_ROOT)
 
-# 生成带时间戳的输出文件夹，返回路径
-def create_output_folder_with_timestamp():
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M")
-    folder_name = f"output{timestamp}"
-    if not os.path.exists(folder_name):
-        os.makedirs(folder_name)
-    print(f"📂 新建保存文件夹: {folder_name}")
-    return folder_name
+    # 带日期时间的新文件夹
+    dt_str = datetime.now().strftime("%Y%m%d_%H%M")
+    new_folder = os.path.join(os.path.dirname(OUTPUT_ROOT), f"output{dt_str}")
+    os.makedirs(new_folder)
+    print(f"📂 新建保存文件夹: {new_folder}")
+    return new_folder
 
-async def save_nodes_to_file(nodes, file_index, output_folder):
+async def save_nodes_to_file(nodes, folder_path, file_index):
     if len(nodes) >= 99:
-        file_name = f"{output_folder}/{OUTPUT_FILE_PREFIX}{file_index}.txt"
+        file_name = os.path.join(folder_path, f"sub{file_index}.txt")
+        combined = "\n".join(nodes)
+        encoded = base64.b64encode(combined.encode("utf-8")).decode("utf-8")
         with open(file_name, "w", encoding="utf-8") as f:
-            combined = "\n".join(nodes)
-            encoded = base64.b64encode(combined.encode("utf-8")).decode("utf-8")
             f.write(encoded)
         print(f"📦 文件 {file_name} 保存成功，节点数: {len(nodes)}")
     else:
@@ -176,19 +178,16 @@ async def main():
         print("[结果] 无可用节点")
         return
 
-    # 准备基础 output 文件夹（清空或新建）
-    prepare_output_folder_base()
+    # 准备输出文件夹（清空旧output文件夹，创建带时间戳的新文件夹）
+    new_output_folder = prepare_output_folder()
 
-    # 生成带时间戳的 output 文件夹，保存文件到这里
-    dated_output_folder = create_output_folder_with_timestamp()
-
-    # 分文件保存
+    # 分批保存
     file_index = 1
     nodes_batch = []
     for i, node in enumerate(tested_nodes, start=1):
         nodes_batch.append(node)
         if len(nodes_batch) == NODES_PER_FILE or i == len(tested_nodes):
-            await save_nodes_to_file(nodes_batch, file_index, dated_output_folder)
+            await save_nodes_to_file(nodes_batch, new_output_folder, file_index)
             file_index += 1
             nodes_batch = []
 
