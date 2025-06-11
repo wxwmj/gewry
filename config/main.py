@@ -6,13 +6,13 @@ import os
 import shutil
 from urllib.parse import urlparse
 from asyncio import Semaphore
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 import glob
 
 MAX_DELAY = 5000
 MAX_SAVE = 6666
 NODES_PER_FILE = 666
-SUB_FILE = "source/subs.txt"  # 确保是项目根目录下的 source 文件夹
+SUB_FILE = "source/subs.txt"  # 项目根目录下的 source 文件夹
 OUTPUT_FILE_PREFIX = "sub"
 SUPPORTED_PROTOCOLS = ("vmess://", "ss://", "trojan://", "vless://", "hysteria://", "hysteria2://", "tuic://")
 
@@ -103,9 +103,16 @@ async def test_all_nodes(nodes):
     results.sort(key=lambda x: x[1])
     return [node for node, delay in results[:MAX_SAVE]]
 
-def delete_old_output():
-    # 删除所有以 output 开头的文件夹和文件
+def get_beijing_time():
+    tz = timezone(timedelta(hours=8))
+    return datetime.now(tz)
+
+def delete_old_output_folders():
+    print("🔴 开始删除所有以 output 开头的文件夹或文件...")
     old_items = glob.glob("output*")
+    if not old_items:
+        print("未找到旧目录或文件 output*，跳过删除。")
+        return
     for item in old_items:
         if os.path.isdir(item):
             print(f"🗑️ 删除旧目录：{item}")
@@ -113,11 +120,9 @@ def delete_old_output():
         elif os.path.isfile(item):
             print(f"🗑️ 删除旧文件：{item}")
             os.remove(item)
-    if not old_items:
-        print("未找到旧目录或文件 output*，跳过删除。")
 
 def create_output_folder():
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M")
+    timestamp = get_beijing_time().strftime("%Y%m%d_%H%M")
     folder_name = f"output{timestamp}"
     os.makedirs(folder_name, exist_ok=True)
     print(f"📂 新建保存文件夹: {folder_name}")
@@ -125,7 +130,7 @@ def create_output_folder():
 
 async def save_nodes_to_file(nodes, file_index, folder):
     if len(nodes) >= 99:
-        file_name = os.path.join(folder, f"{OUTPUT_FILE_PREFIX}{file_index}.txt")
+        file_name = f"{folder}/{OUTPUT_FILE_PREFIX}{file_index}.txt"
         with open(file_name, "w", encoding="utf-8") as f:
             combined = "\n".join(nodes)
             encoded = base64.b64encode(combined.encode("utf-8")).decode("utf-8")
@@ -165,10 +170,7 @@ async def main():
         print("[结果] 无可用节点")
         return
 
-    # 新增：先删除所有旧的 output* 文件夹和文件
-    delete_old_output()
-
-    # 创建新的 output 文件夹
+    delete_old_output_folders()
     folder = create_output_folder()
 
     file_index = 1
