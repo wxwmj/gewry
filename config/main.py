@@ -12,9 +12,17 @@ import glob
 MAX_DELAY = 5000
 MAX_SAVE = 6666
 NODES_PER_FILE = 666
-SUB_FILE = "source/subs.txt"  # 确保是项目根目录下的 source 文件夹
 OUTPUT_FILE_PREFIX = "sub"
-SUPPORTED_PROTOCOLS = ("vmess://", "ss://", "trojan://", "vless://", "hysteria://", "hysteria2://", "tuic://")
+SUPPORTED_PROTOCOLS = (
+    "vmess://", "ss://", "trojan://", "vless://",
+    "hysteria://", "hysteria2://", "tuic://"
+)
+
+def get_project_root():
+    # main.py 在 config 下，项目根目录上两级
+    return os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+
+SUB_FILE = os.path.join(get_project_root(), "source", "subs.txt")
 
 def is_supported_node(url):
     return url.startswith(SUPPORTED_PROTOCOLS)
@@ -104,17 +112,28 @@ async def test_all_nodes(nodes):
     return [node for node, delay in results[:MAX_SAVE]]
 
 def delete_old_output_folders():
-    old_folders = glob.glob("output*")
-    for folder in old_folders:
-        if os.path.isdir(folder):
-            print(f"🗑️ 删除旧目录：{folder}")
-            shutil.rmtree(folder)
+    root = get_project_root()
+    print(f"项目根目录路径: {root}")
+
+    old_folders = glob.glob(os.path.join(root, "output*"))
     if not old_folders:
         print("未找到旧目录 output，跳过删除。")
+        return
+
+    for folder in old_folders:
+        if os.path.isdir(folder):
+            try:
+                print(f"🗑️ 删除旧目录：{folder}")
+                shutil.rmtree(folder)
+            except Exception as e:
+                print(f"[错误] 删除文件夹失败：{folder}，错误：{e}")
+        else:
+            print(f"[跳过] 不是目录，忽略：{folder}")
 
 def create_output_folder():
+    root = get_project_root()
     timestamp = datetime.now().strftime("%Y%m%d_%H%M")
-    folder_name = f"output{timestamp}"
+    folder_name = os.path.join(root, f"output{timestamp}")
     os.makedirs(folder_name)
     print(f"📂 新建保存文件夹: {folder_name}")
     return folder_name
@@ -178,5 +197,5 @@ async def main():
 
 if __name__ == "__main__":
     print(f"程序启动时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    delete_old_output_folders()  # 启动时直接删除旧 output 文件夹
+    delete_old_output_folders()
     asyncio.run(main())
