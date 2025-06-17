@@ -2,7 +2,7 @@ name: Auto Update Sub
 
 on:
   schedule:
-    - cron: '0 4,10 * * *'   # 每天 UTC 04:00 和 UTC 10:00 执行 (即北京时间 12:00 和 18:00)
+    - cron: '0 4,11,14,21 * * *'   # 每天北京时间 05:00、12:00、19:00、22:00 执行
   workflow_dispatch:  # 允许手动触发工作流
 
 jobs:
